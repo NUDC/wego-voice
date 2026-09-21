@@ -1,0 +1,10 @@
+# 仓库里统一存 LF，检出时由各平台的 core.autocrlf 决定。
+# 不写这一条的话，Windows 提交的文件会带上 CRLF，
+# 之后 CI（Linux）再碰一次就是整文件的假 diff。
+* text=auto eol=lf
+
+# 二进制：别让 Git 当文本去做换行转换，会直接损坏文件
+*.png binary
+*.ico binary
+*.wav binary
+*.onnx binary

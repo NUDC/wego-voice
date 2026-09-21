@@ -1,0 +1,20 @@
+# Rust
+target/
+
+# Node
+node_modules/
+dist/
+# 官网预渲染的中间产物：构建完就被 prerender.mjs 删掉，不该进版本库
+dist-ssr/
+
+# Tauri 生成物
+app/src-tauri/gen/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# 本地压测输出
+*.soak.txt

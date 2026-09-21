@@ -1,0 +1,64 @@
+name: 官网部署到 GitHub Pages
+
+# 只有 site/ 变了才重新部署。
+#
+# 这个仓库里 app/ 是 Rust + Tauri 桌面应用，跟官网完全无关 ——
+# 改一行 DSP 就重跑一次前端构建纯属浪费额度。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同时只跑一个部署。连续推送时取消排队中的旧任务，
+# 但**不打断正在进行的部署** —— 半路掐断会让站点停在中间状态。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      # npm ci 而不是 npm install：严格按 lock 文件装，
+      # 保证线上构建和本地是同一套依赖
+      - run: npm ci
+
+      # build 里串了 tsc → vite build → SSR 构建 → 预渲染。
+      # 预渲染脚本会在渲染结果异常时直接抛错，
+      # 所以这一步绿了就代表产物里真的有正文，不是空壳。
+      - run: npm run build
+        env:
+          SITE_URL: https://nudc.github.io/wego-voice/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

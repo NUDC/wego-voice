@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>wego-voice — 桌面实时修音与音色转换工具</title>
+    <meta
+      name="description"
+      content="唱的时候耳返里听到修准的自己，唱完把干声换成目标音色。Windows 单机工具，实测端到端延迟 29.92 毫秒。"
+    />
+
+    <!-- 浏览器 UI 跟着站点配色走，移动端地址栏才不会突兀地留一条白边 -->
+    <meta name="theme-color" content="#0b0c10" />
+    <meta name="color-scheme" content="dark" />
+
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+
+    <!-- 社交卡片。canonical 与 og:url 由 scripts/prerender.mjs 注入
+         （它们需要绝对地址，而 base 是相对的）。 -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="wego-voice" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta
+      property="og:title"
+      content="wego-voice — 唱的时候，就听见自己唱准了"
+    />
+    <meta
+      property="og:description"
+      content="实时修音直接进耳返，实测端到端 29.92 毫秒。Windows 单机运行，声音不上传。"
+    />
+    <meta name="twitter:card" content="summary" />
+
+    <!-- 结构化数据：让搜索结果里能直接显示"平台 / 价格 / 类别"，
+         而不是只有一段摘要。字段刻意保守 —— 还没发布，不写版本号和下载链接。 -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "wego-voice",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Windows 10, Windows 11",
+        "description": "桌面实时修音与音色转换工具。唱的时候耳返里听到修准的自己，唱完把干声换成目标音色。端到端延迟实测 29.92 毫秒，全程单机运行。",
+        "inLanguage": "zh-CN"
+      }
+    </script>
+
+    <script type="module" src="/src/main.tsx"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+[package]
+name = "wego-voice-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "wego-voice 桌面工具（Tauri 外壳）"
+
+[lib]
+# Tauri 2 的约定：核心逻辑放 lib，main.rs 只是入口。
+# 这样 `--bench` 这类无界面入口也能复用同一套代码。
+name = "wego_voice_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+voice-audio.workspace = true
+voice-core.workspace = true
+tauri = { version = "2", features = [] }
+clap.workspace = true
+log.workspace = true
+env_logger.workspace = true
+serde.workspace = true
+serde_json = "1"
+anyhow.workspace = true

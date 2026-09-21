@@ -1,0 +1,59 @@
+[package]
+name = "voice-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "wego-voice 的实时音频引擎：cpal 双流桥接、实时线程提权、延迟与 xrun 测量。"
+
+[dependencies]
+voice-core.workspace = true
+cpal.workspace = true
+rtrb.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+# 库只用 log 门面，不初始化 logger —— 初始化是可执行文件的事。
+log.workspace = true
+# 仅 bin 需要；库代码不碰它。
+env_logger.workspace = true
+serde = { workspace = true, optional = true }
+audio_thread_priority.workspace = true
+
+# 直接查询 WASAPI 的硬件周期能力，判断低延迟路线可行性。
+# 版本对齐 cpal 0.18 已引入的 windows 0.62，避免重复编译一套。
+[target.'cfg(windows)'.dependencies]
+# WASAPI 独占模式的低延迟后端。
+# cpal（0.15 / 0.18 实测）只走共享模式，端到端卡在 55ms，
+# 而共享模式的块周期由音频引擎决定、改不了 —— 详见 docs/Phase0-实测记录.md §2。
+# 这个 crate 出自 CamillaDSP 作者，纯 Rust，直接暴露 EventsExclusive{period_hns}。
+wasapi = "0.24"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_Devices_FunctionDiscovery",
+] }
+
+[features]
+default = ["serde"]
+serde = ["dep:serde"]
+
+# 独立的 headless 压测入口。
+# 与 src-tauri 的 `--bench` 跑的是同一套引擎代码，
+# 但编译时不牵扯 Tauri，迭代快得多。
+[[bin]]
+name = "wego-bench"
+path = "src/bin/bench.rs"
+
+# WASAPI 硬件周期探针。回答"低延迟路线到底可不可行"，
+# 不写整个后端就能拿到答案。
+[[bin]]
+name = "wasapi-probe"
+path = "src/bin/wasapi_probe.rs"
+
+# 实际打开独占流，验证前一个探针算出来的延迟是不是真能拿到。
+[[bin]]
+name = "wasapi-exclusive"
+path = "src/bin/wasapi_exclusive.rs"

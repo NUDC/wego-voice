@@ -1,0 +1,11 @@
+[package]
+name = "voice-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "wego-voice 的纯 DSP 核心：音高检测、音高修正、调式量化。无 I/O、无 GUI 依赖。"
+
+# 刻意保持零依赖：这个 crate 将来要复用为 CLAP 插件的 DSP 核心，
+# 依赖越少，宿主环境适配越省事。
+[dependencies]

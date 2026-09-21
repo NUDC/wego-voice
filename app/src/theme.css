@@ -1,0 +1,82 @@
+/**
+ * 设计令牌。
+ *
+ * 之前的问题是「每个值都是现编的」：11px / 11.5px / 12px / 12.5px / 13px
+ * 混在一起，四种强调色互相打架，所有东西都用边框分隔。
+ * 结果就是看起来像调试面板而不是产品。
+ *
+ * 这里定死三套标尺：**间距、字号、层次**。组件只准从里面取值。
+ */
+:root {
+  /* ── 层次：用背景深浅做分层，而不是到处画边框 ── */
+  --bg-0: #0a0b0f; /* 窗口底 */
+  --bg-1: #101219; /* 面板 */
+  --bg-2: #161923; /* 面板内的凸起（输入框、按钮） */
+  --bg-3: #1d212c; /* hover */
+  --stroke: #232734; /* 主分隔线 */
+  --stroke-soft: #1a1d26; /* 次分隔线，几乎看不见但有 */
+
+  /* ── 文字：四级，够用 ── */
+  --fg: #eceef4;
+  --fg-2: #9aa1b4; /* 次要文字、标签 */
+  --fg-3: #626a7e; /* 提示、脚注 */
+  --fg-4: #414859; /* 禁用、占位 */
+
+  /* ── 强调色：只有一个 ── */
+  --accent: #4cc2f0;
+  --accent-dim: #1d4757;
+  --accent-fg: #052330;
+
+  /* ── 语义色：只用于状态，不用于装饰 ── */
+  --good: #45d483;
+  --caution: #f2b53c;
+  --alert: #f2675f;
+
+  /* ── 间距：4 的倍数 ── */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+
+  /* ── 字号：跨度要拉开，相邻两级差得够多才有层次 ── */
+  --t-micro: 10.5px;
+  --t-label: 11.5px;
+  --t-body: 13px;
+  --t-lead: 15px;
+  --t-num: 22px;
+  --t-hero: 34px;
+  --t-mega: 68px;
+
+  --radius: 8px;
+  --radius-sm: 5px;
+
+  /* 动效统一，避免每处各写一套 */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --fast: 120ms var(--ease);
+  --slow: 260ms var(--ease);
+
+  --titlebar-h: 38px;
+
+  font-family:
+    "Inter", "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system,
+    sans-serif;
+  font-size: var(--t-body);
+  color-scheme: dark;
+}
+
+/* 数字一律等宽，否则每帧刷新会左右抖 —— 读数抖动比数字本身更烦人 */
+.mono {
+  font-family: "Cascadia Mono", "SF Mono", Consolas, ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* 数字要显得稳，字重比正文重一档，字距收紧 */
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
