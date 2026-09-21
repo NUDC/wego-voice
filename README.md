@@ -6,6 +6,8 @@
 
 **Windows** 单机运行，无账号、无服务端、运行时离线。
 
+官网：<https://nudc.github.io/wego-voice/>
+
 ---
 
 ## 仓库结构
@@ -77,7 +79,7 @@ cd app
 npm install
 
 # 构建并运行
-npx tauri build --no-bundle
+npm run tauri build -- --no-bundle
 ./target/release/wego-voice-app.exe --autostart
 
 # 开发模式（热重载）
@@ -100,6 +102,13 @@ wego-voice-app.exe --selftest    # 自检：走一遍 UI 用的那条路并断�
 `--bench` 与独立的 `wego-bench` 跑的是**完全相同**的引擎代码，
 两者数字相减即 Tauri 外壳的净开销 —— 同源对比，没有框架差异混在里面。
 
+> 🔴 **打包必须走 `npm run tauri build`，不能直接 `cargo build`。**
+>
+> 直接 `cargo build` 出来的 exe **前端是死的**：开窗即空白，
+> 零 JS 执行、零 IPC，看起来像应用崩了。
+> 原因是它不保证把最新的 `dist/` 重新嵌进二进制。
+> 排查这个坑花了很久，因为所有征兆都指向前端代码本身。
+
 ### 音频测量工具
 
 `wego-bench` 用 clap 子命令：
@@ -114,7 +123,19 @@ wego-bench soak --backend cpal        # 用共享模式做对照
 wego-bench soak --no-rt               # 关掉实时优先级，做对照实验
 wego-bench latency --rounds 50 --mute # 脉冲实测往返延迟
 wego-bench sweep                      # 扫描缓冲大小，找不爆音的最小值
+wego-bench dsp -d 30                  # 离线量 DSP 成本（不碰声卡）
 wego-bench --help                     # 全部参数（带实测数字）
+```
+
+⚠️ **量 DSP 成本必须用 `dsp` 子命令，不能用 `soak`。**
+`soak` 喂的是真实麦克风：没人唱歌时信号判为清音，PSOLA 直接透传，
+`overlap_add` 一次都不执行 —— 于是它测出来的"CPU 占用"跟 DSP 真实成本无关。
+`dsp` 喂合成浊音（冲激串过谐振器），逼着走完整的分析＋合成路径。
+
+```bash
+wego-bench dsp -d 30                          # 原声基线
+wego-bench dsp -d 30 --formant-shift 4        # 声线路径（逐样本插值）
+wego-bench dsp -d 30 --pitch-shift 5 --formant-shift 6
 ```
 
 共用参数（`--backend` / `--mute` / `--f0-floor` / `--target-fill` / `--key` …）
@@ -154,13 +175,42 @@ RUST_LOG=debug wego-bench soak    # 调日志级别
 ### 官网
 
 React + Vite + TS，与 `app/` 同栈（一个人维护两边心智成本更低）。
+部署在 GitHub Pages：<https://nudc.github.io/wego-voice/>
 
 ```bash
 cd site
 npm install
 npm run dev     # http://localhost:5174（避开 app 的 5173，可同时开）
-npm run build   # tsc --noEmit && vite build → site/dist/
+npm run build   # tsc → vite build → SSR 构建 → 预渲染 → site/dist/
+npm run preview # 本地验收构建产物
 ```
+
+**产物是零 JavaScript 的静态页。**
+
+这个站一个交互都没有：没有 `useState`、没有 `useEffect`，FAQ 折叠用原生
+`<details>`，平滑滚动是 CSS 的 `scroll-behavior`。既然如此，把 React 运行时
+发给访客纯属浪费 —— 226 kB 的 JS 只为画一段构建后就不再变的 HTML。
+
+所以：**用 React 写，但不发 React**。构建期 `renderToStaticMarkup` 成字符串
+塞进 HTML，再把 script 标签和 JS 文件一起删掉。
+
+| | 之前 | 现在 |
+|---|---|---|
+| JS | 226 kB | **0** |
+| HTML | 2.3 kB（空壳） | 10.4 kB（含全部正文） |
+| 禁用 JS | 白屏 | 完整可读 |
+
+> ⚠️ **想加交互之前先读 `src/entry-server.tsx` 的注释。**
+> 一旦有组件需要 `useState`／事件处理，零 JS 就不成立了，
+> 必须改成 hydrate（保留 script 标签 + `createRoot` 换 `hydrateRoot`）。
+> 在那之前优先找原生 HTML 解法 —— 落地页几乎总是够用。
+
+`base` 设为 `"./"`（相对路径）：GitHub Pages 项目站点挂在 `/wego-voice/`
+子路径下，绝对路径会 404；写死子路径又会在换域名或改仓库名时再坏一次。
+
+**首次部署需要在仓库里手动开一次**：Settings → Pages → Source 选
+**GitHub Actions**。之后推送 `site/**` 就会自动构建发布
+（见 `.github/workflows/pages.yml`）。
 
 **内容集中在 `src/content.ts`，类型化。**
 
@@ -181,8 +231,24 @@ app/crates/voice-audio/   实时引擎
   duplex.rs               与后端无关的核心：环形缓冲、漂移补偿、块大小自适应
   backend/                WASAPI 独占（主力）+ cpal 共享（兜底）
 app/src-tauri/            Tauri 外壳：引擎持有、command 层、20Hz 指标推送
-app/src/                  React 诊断页 + canvas 音高条
+  characters.rs           角色（声线预设）定义与持久化
+app/src/                  React 界面：调音 / 角色 / 诊断 三视图
 ```
+
+### 角色：声线是怎么做的
+
+一个「角色」把调、修正速度、整体移调、共振峰平移打成一个具名预设 ——
+用户想的是"唱成少女音"这**一件**事，不是四个分别要拧的旋钮。
+角色库存在 `%APPDATA%/com.wego.voice/characters.json`。
+
+声线靠**共振峰平移**塑造：把 PSOLA 的颗粒按 α 重采样。因为输出音高只由
+合成标记间距决定、与颗粒内容无关，所以这缩放的是频谱包络（≈声道长度），
+**音高原封不动、延迟一毫秒不加**。实测 CPU 仅 +7% 平均 / +19% P99
+（占回调预算 5%）。
+
+> 这套能做出"像另一个人"，**做不到"像某个指定的人"** ——
+> 后者需要神经声码器与说话人嵌入，受实施方案 #14 许可证审计阻塞。
+> 所以功能叫「角色」不叫「变声」，界面上没有任何"克隆"字样。
 
 ### 两个后端
 
