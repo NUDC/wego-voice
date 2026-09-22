@@ -804,56 +804,21 @@ details p {
   margin: 12px 0 0 24px;
 }
 
-/* ───── 下载 ───── */
-.soon,
-.release {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 34px 28px;
-  max-width: var(--prose);
-}
-
-.soon .big {
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0 0 12px;
-}
-
-.soon p {
-  color: var(--dim);
-  margin: 0 0 12px;
-}
-
-.release {
-  text-align: center;
-}
-
-.release-head {
+/* 下载按钮下面那行事实：平台 / 体积 / 形态。
+   底部的下载卡片删掉之后，这些信息得有个去处 —— 放按钮正下方最合适，
+   用户正要点的时候就看见了。 */
+.dl-meta {
   display: flex;
-  align-items: baseline;
-  justify-content: center;
   flex-wrap: wrap;
-  gap: 6px 14px;
-  margin-bottom: 20px;
-}
-
-.release-tag {
-  font-size: 27px;
-  font-weight: 700;
-  color: var(--text);
-  letter-spacing: -0.02em;
-}
-
-.release-meta {
-  font-size: 14px;
+  gap: 6px 10px;
+  margin: 0 0 14px;
+  font-size: 13px;
   color: var(--faint);
 }
 
-.release .note {
-  margin-top: 18px;
-  text-align: left;
+.dl-meta span + span::before {
+  content: "·";
+  margin-right: 10px;
 }
 
 /* ───── 页脚 ───── */
@@ -880,11 +845,4 @@ footer {
 
 .foot .spacer {
   margin-left: auto;
-}
-
-.release-hint {
-  margin: 14px 0 0;
-  font-size: 13.5px;
-  line-height: 1.8;
-  color: var(--faint);
 }

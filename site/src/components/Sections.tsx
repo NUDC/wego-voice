@@ -5,7 +5,6 @@ import {
   FEATURES,
   LATENCY_BUDGET,
   POSITIONING,
-  RELEASE,
   REPO,
   REQUIREMENTS,
 } from "../content";
@@ -174,69 +173,6 @@ export function Faq() {
         </details>
       ))}
     </Section>
-  );
-}
-
-export function Download() {
-  // 没有安装包时**不要**给一个点了会 404 的按钮。
-  // 版本信息是构建期注入的，为空是正常状态（见 content.ts 的 RELEASE）。
-  if (!RELEASE.url) {
-    return (
-      <section id="download" className="wrap download">
-        <h2>下载</h2>
-        <div className="soon">
-          <p className="big">尚未发布</p>
-          <p>
-            实时修音已完成，声线模拟的离线转换还在做。
-            没有可下载的版本，也没有预约、抢先体验或等待列表。
-          </p>
-          <p className="note">
-            发布之后这一段会自动换成下载按钮 ——
-            构建流水线会从 GitHub Release 取版本号写进页面。
-          </p>
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section id="download" className="wrap download">
-      <h2>下载</h2>
-      <div className="release">
-        <div className="release-head">
-          <span className="release-tag mono">{RELEASE.tag}</span>
-          <span className="release-meta">
-            {FACTS.platform}
-            {RELEASE.size && ` · ${RELEASE.size}`}
-            {RELEASE.date && ` · ${RELEASE.date}`}
-          </span>
-        </div>
-
-        {/* 只发免安装版。目标用户是"要把唱的东西做成成品的人"，
-            这类人普遍偏好拷了就跑、不写注册表的单文件。 */}
-        <a className="btn primary big" href={RELEASE.url}>
-          下载
-        </a>
-        <p className="release-hint">
-          单个 exe，<strong>不用安装</strong> · 不写注册表、不留卸载项 ·
-          不想要了直接删文件
-        </p>
-
-        {/* 没有代码签名，SmartScreen 必弹。事先说清楚，
-            比让用户以为下到了病毒强。 */}
-        <p className="note">
-          <strong>未做代码签名</strong>，Windows 会弹「已保护你的电脑」——
-          点「更多信息 → 仍要运行」。Release 页附有 SHA256 可自行核对。
-          <br />
-          需要系统已有 <b>Microsoft Edge WebView2 运行时</b>
-          （微软官方免费组件，Win11 与较新的 Win10 都自带）。
-          缺失时程序会弹窗说明，不会静默失败。
-        </p>
-        <p className="note">
-          <a href={`${REPO}/releases`}>所有版本与更新说明</a>
-        </p>
-      </div>
-    </section>
   );
 }
 

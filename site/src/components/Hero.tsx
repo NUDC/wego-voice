@@ -1,4 +1,4 @@
-import { FACTS, LATENCY_SCALE, NAV, RELEASE } from "../content";
+import { FACTS, LATENCY_SCALE, NAV, RELEASE, REPO } from "../content";
 import { Tuner } from "./Tuner";
 
 export function Nav() {
@@ -16,8 +16,10 @@ export function Nav() {
             {n.label}
           </a>
         ))}
-        <a className="cta" href="#download">
-          下载
+        {/* 直链到安装包。GitHub 的 release 资产带 Content-Disposition:
+            attachment，点了就是下载，不会跳走。 */}
+        <a className="cta" href={RELEASE.url || `${REPO}/releases`}>
+          {RELEASE.url ? "下载" : "尚未发布"}
         </a>
       </nav>
     </header>
@@ -52,36 +54,56 @@ export function Hero() {
   return (
     <section className="hero" id="top">
       <div className="hero-text">
-        <p className="eyebrow">Windows 桌面工具 · 单机运行 · 无需联网</p>
+        <p className="eyebrow">Windows 桌面工具 · 不联网 · 声音不出本机</p>
         <h1>
-          唱的时候，
+          唱的当下，
           <br />
-          就听见自己唱准了。
+          就听见自己唱准了
         </h1>
         <p className="lede">
-          实时修音直接进耳返 —— 不是唱完再修，是<strong>唱的当下</strong>
-          就听到。声线也能当场改：共振峰与明暗可调，
-          <strong>不动音高、不加延迟</strong>。干声原样落盘，随时重来。
+          <strong>不是唱完再修</strong> —— 麦克风进来的声音，修正之后
+          直接回到耳返里。声线也能当场换：更细、更厚、更亮，
+          <strong>都不动音高</strong>。干声原样落盘，随时能重来。
         </p>
 
         <div className="hero-actions">
-          <a className="btn primary" href="#download">
-            {RELEASE.url ? `下载 ${RELEASE.tag}` : "下载（开发中）"}
+          {/* 点了直接下载，不再跳到页面底部再点一次。
+              没有发布版本时退回 Releases 页 —— 那里会如实显示"还没有"，
+              而不是给一个点了 404 的链接。 */}
+          <a className="btn primary" href={RELEASE.url || `${REPO}/releases`}>
+            {RELEASE.url ? `下载 ${RELEASE.tag}` : "尚未发布"}
           </a>
           <a className="btn" href="#how">
             先看技术细节
           </a>
         </div>
 
+        {RELEASE.url && (
+          <p className="dl-meta">
+            <span className="mono">{FACTS.platform}</span>
+            <span className="mono">{RELEASE.size}</span>
+            <span className="mono">免安装单文件</span>
+          </p>
+        )}
+
+        {/* 下载卡片删掉之后，两条关键告知搬到这里：
+            戴耳机（否则啸叫）、首次运行会被 Windows 拦（否则以为是病毒）。
+            详情各自链到对应段落，不在首屏铺开。 */}
         <p className="fineprint">
-          需要有线耳机或外置声卡。蓝牙做不了实时耳返 —— 原因见{" "}
-          <a href="#require">硬件要求</a>。
+          需要有线耳机或外置声卡，蓝牙做不了实时耳返（
+          <a href="#require">为什么</a>）。
+          {RELEASE.url && (
+            <>
+              {" "}首次运行 Windows 会拦一下 ——{" "}
+              <a href="#faq">怎么过</a>。
+            </>
+          )}
         </p>
       </div>
 
       <div className="hero-visual">
         <Tuner />
-        <p className="hero-cap">唱的当下看到的东西：音名、偏差音分、最近 8 秒走势</p>
+        <p className="hero-cap">实时显示：音名、偏差音分、最近 8 秒走势</p>
       </div>
 
       {/* 延迟是这个产品的全部技术前提，所以它占满首屏下沿。
