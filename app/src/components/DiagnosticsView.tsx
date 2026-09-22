@@ -8,7 +8,7 @@
  * 它是**第二视图**，不是首页（见 TunerView 的说明）。
  */
 import type { BackendInfo, LatencyResult, Tick } from "../ipc";
-import { Field, Meter, Panel, Row, Segmented, Stat, type Tone } from "./ui";
+import { Field, Knob, Meter, Panel, Row, Segmented, Stat, type Tone } from "./ui";
 
 function fmt(n: number | undefined, digits = 0) {
   return n === undefined || Number.isNaN(n) ? "—" : n.toFixed(digits);
@@ -78,50 +78,45 @@ export function DiagnosticsView(p: DiagProps) {
 
   return (
     <div className="diag">
-      <div className="stats">
-        <Stat
-          label="端到端延迟"
-          value={running ? fmt(tick.latencyMs, 2) : "—"}
-          unit={running ? "ms" : ""}
-          tone={latencyTone(tick.latencyMs)}
-          hint={tick.latencyVerdict || "引擎未启动"}
-        />
-        <Stat
-          label="实时健康度"
-          value={running ? (healthy ? "正常" : `${m.xruns}`) : "—"}
-          unit={running && !healthy ? "次 xrun" : ""}
-          tone={!running ? "neutral" : healthy ? "good" : "alert"}
-          hint={
-            running
-              ? stalls
-                ? `整机停顿 ${stalls} 次`
-                : "无欠载、无溢出"
-              : "引擎未启动"
-          }
-        />
-        <Stat
-          label="时钟漂移"
-          value={
-            running
-              ? `${tick.driftPpm >= 0 ? "+" : ""}${fmt(tick.driftPpm, 1)}`
-              : "—"
-          }
-          unit={running ? "ppm" : ""}
-          tone={running ? "good" : "neutral"}
-          hint={
-            running
-              ? `不补偿 10 分钟累积 ${fmt(Math.abs(tick.uncompensated10minMs), 1)} ms`
-              : "引擎未启动"
-          }
-        />
-        <Stat
-          label="CPU 占回调预算"
-          value={running ? `${fmt(cpuAvg)}/${fmt(cpuPeak)}` : "—"}
-          unit={running ? "%" : ""}
-          tone={cpuTone}
-          hint={running ? "平均 / 峰值" : "引擎未启动"}
-        />
-      </div>
+      {/* 引擎没跑时四张卡片全是「— / 引擎未启动」—— 一模一样、信息量为零，
+          却占着最显眼的位置。换成一行说明。 */}
+      {running ? (
+        <div className="stats">
+          <Stat
+            label="端到端延迟"
+            value={fmt(tick.latencyMs, 2)}
+            unit="ms"
+            tone={latencyTone(tick.latencyMs)}
+            hint={tick.latencyVerdict}
+          />
+          <Stat
+            label="实时健康度"
+            value={healthy ? "正常" : `${m.xruns}`}
+            unit={healthy ? "" : "次 xrun"}
+            tone={healthy ? "good" : "alert"}
+            hint={stalls ? `整机停顿 ${stalls} 次` : "无欠载、无溢出"}
+          />
+          <Stat
+            label="时钟漂移"
+            value={`${tick.driftPpm >= 0 ? "+" : ""}${fmt(tick.driftPpm, 1)}`}
+            unit="ppm"
+            tone="good"
+            hint={`不补偿 10 分钟累积 ${fmt(Math.abs(tick.uncompensated10minMs), 1)} ms`}
+          />
+          <Stat
+            label="CPU 占回调预算"
+            value={`${fmt(cpuAvg)}/${fmt(cpuPeak)}`}
+            unit="%"
+            tone={cpuTone}
+            hint="平均 / 峰值"
+          />
+        </div>
+      ) : (
+        <p className="diag-idle">
+          引擎未启动 —— 下面是上次运行留下的配置与静态信息。
+          回<b>调音</b>页启动之后，这里会显示延迟、健康度、时钟漂移与 CPU 占用。
+        </p>
+      )}
 
       <div className="panels">
         <Panel title="延迟构成">
@@ -251,26 +246,29 @@ export function DiagnosticsView(p: DiagProps) {
                   </p>
                 )}
 
-                {/* 这一项运行中可改 —— 和下面「引擎参数」那两个不同，
-                    它不需要重建音频链路，调完立刻听得出来。 */}
-                <Field
-                  label="门限余量"
-                  hint="人声要高出本底多少 dB 才放行。调高更不容易被噪声误触发，但会吃掉弱起音。"
-                >
-                  <div className="slider-row">
-                    <input
-                      type="range"
-                      min={0}
-                      max={30}
-                      step={1}
-                      value={p.noiseGateDb}
-                      onChange={(e) => p.onNoiseGateDb(Number(e.target.value))}
-                    />
-                    <span className="slider-val mono">
-                      {p.noiseGateDb === 0 ? "关" : `${p.noiseGateDb} dB`}
-                    </span>
-                  </div>
-                </Field>
+                {/* 这一项运行中可改 —— 和「引擎参数」那两个不同，
+                    它不需要重建音频链路，调完立刻听得出来。
+                    用和角色页同一个 Knob：同一种控件不该有两套长相。 */}
+                <div className="panel-ctl">
+                  <Knob
+                    label="门限余量"
+                    value={p.noiseGateDb}
+                    min={0}
+                    max={30}
+                    step={1}
+                    unit="dB"
+                    read={
+                      p.noiseGateDb === 0
+                        ? "已关闭 —— 只剩绝对静音保护"
+                        : p.noiseGateDb < 8
+                          ? "宽松，弱起音留得住但容易被噪声误触发"
+                          : p.noiseGateDb > 18
+                            ? "很严，会吃掉弱起音和收尾气声"
+                            : "人声要高出本底这么多才放行"
+                    }
+                    onChange={p.onNoiseGateDb}
+                  />
+                </div>
               </>
             );
           })()}
@@ -354,7 +352,35 @@ export function DiagnosticsView(p: DiagProps) {
           )}
         </Panel>
 
-        <Panel title="引擎参数" className="span-2">
+        <Panel title="环境">
+          {info && (
+            <>
+              <Row label="后端" value={info.backend} />
+              <Row
+                label="输入"
+                value={`${info.inputDevice}（${info.inputFormat}）`}
+                muted
+              />
+              <Row
+                label="输出"
+                value={`${info.outputDevice}（${info.outputFormat}）`}
+                muted
+              />
+              <Row label="采样率" value={`${info.sampleRate} Hz`} />
+            </>
+          )}
+          <Row
+            label="窗口视口"
+            value={`${p.viewport.w} × ${p.viewport.h}`}
+            muted
+          />
+          <Row
+            label="界面溢出"
+            value={p.viewport.overflow > 0 ? `${p.viewport.overflow} px` : "无"}
+            tone={p.viewport.overflow > 0 ? "caution" : "good"}
+          />
+        </Panel>
+        <Panel title="引擎参数" className="span-full">
           <div className="param-grid">
             <Field
               label="PSOLA 基频下限"
@@ -394,34 +420,6 @@ export function DiagnosticsView(p: DiagProps) {
           </p>
         </Panel>
 
-        <Panel title="环境" className="span-2">
-          {info && (
-            <>
-              <Row label="后端" value={info.backend} />
-              <Row
-                label="输入"
-                value={`${info.inputDevice}（${info.inputFormat}）`}
-                muted
-              />
-              <Row
-                label="输出"
-                value={`${info.outputDevice}（${info.outputFormat}）`}
-                muted
-              />
-              <Row label="采样率" value={`${info.sampleRate} Hz`} />
-            </>
-          )}
-          <Row
-            label="窗口视口"
-            value={`${p.viewport.w} × ${p.viewport.h}`}
-            muted
-          />
-          <Row
-            label="界面溢出"
-            value={p.viewport.overflow > 0 ? `${p.viewport.overflow} px` : "无"}
-            tone={p.viewport.overflow > 0 ? "caution" : "good"}
-          />
-        </Panel>
       </div>
     </div>
   );

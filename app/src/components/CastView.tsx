@@ -25,7 +25,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { api, type Character, type TakeInfo, type TimbreSuggestion } from "../ipc";
-import { Field, Panel, Segmented } from "./ui";
+import { Field, Knob, Panel, Segmented } from "./ui";
 
 const TONICS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
@@ -446,53 +446,5 @@ function FromReference({
         </>
       )}
     </Panel>
-  );
-}
-
-function Knob({
-  label,
-  value,
-  min,
-  max,
-  step,
-  unit,
-  read,
-  onChange,
-  tone,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  unit: string;
-  read: string;
-  onChange: (v: number) => void;
-  tone?: "caution";
-}) {
-  return (
-    <div className="knob">
-      {/* 数值紧跟标签，而不是甩到行尾 ——
-          面板有一千像素宽，两端对齐会让眼睛横扫一整屏才对得上。 */}
-      <div className="knob-head">
-        <span className="knob-label">{label}</span>
-        <span className={`knob-val mono ${tone ? `tone-${tone}` : ""}`}>
-          {step < 1 && value > 0 ? "+" : ""}
-          {step < 1 ? value.toFixed(1) : value}
-          <em>{unit}</em>
-        </span>
-      </div>
-      <div className="knob-body">
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={(e) => onChange(Number(e.target.value))}
-        />
-        <span className="knob-read">{read}</span>
-      </div>
-    </div>
   );
 }

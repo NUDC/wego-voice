@@ -385,6 +385,10 @@ main::-webkit-scrollbar-thumb:hover {
 }
 
 .console-row select,
+.console-row .segmented {
+  align-self: stretch;
+}
+
 .console-row .segmented,
 .console-row .cast-pick,
 .console-row .slider-row,
@@ -658,6 +662,31 @@ main::-webkit-scrollbar-thumb:hover {
   border-left-color: var(--caution);
 }
 
+/* 面板里的控件块（如诊断页的门限余量）。
+   不隔开的话会紧贴最后一行数据，看起来像是那一行的值。 */
+.panel-ctl {
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--stroke-soft);
+}
+
+/* 引擎未启动时替代四张空卡片的一行说明 */
+.diag-idle {
+  margin: 0;
+  padding: var(--s3) var(--s4);
+  background: var(--bg-1);
+  border: 1px solid var(--stroke);
+  border-left: 2px solid var(--fg-4);
+  border-radius: var(--radius);
+  font-size: var(--t-label);
+  line-height: 1.7;
+  color: var(--fg-3);
+}
+
+.diag-idle b {
+  color: var(--fg-2);
+}
+
 /* 概念说明讲一次，放面板顶部。拆成几段插在滑杆之间会把参数割碎。 */
 .knob-intro {
   margin: 0 0 var(--s3);
@@ -865,11 +894,28 @@ input.text:focus-visible {
   text-overflow: ellipsis;
 }
 
+ /* 显式三列，不用 auto-fit。
+ *
+ * auto-fit 的列数随窗口宽度跳变，而面板数量是固定的 —— 结果是某些宽度下
+ * 最后一行只剩一个面板、右边空出一大块。显式列数 + 让「引擎参数」占满整行，
+ * 6 个普通面板正好排成两行，没有空洞。 */
 .panels {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--s3);
   align-content: start;
+}
+
+@media (max-width: 1180px) {
+  .panels {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 800px) {
+  .panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .panel {
@@ -880,13 +926,14 @@ input.text:focus-visible {
   min-width: 0;
 }
 
-.panel.span-2 {
-  grid-column: span 2;
+ /* 占满整行。`span 2` 在三列布局里会留下 1/3 的空洞。 */
+.panel.span-full {
+  grid-column: 1 / -1;
 }
 
 @media (max-width: 760px) {
-  .panel.span-2 {
-    grid-column: span 1;
+  .panel.span-full {
+    grid-column: 1 / -1;
   }
 }
 
@@ -1173,7 +1220,11 @@ select:disabled {
 }
 
 /* 分段控件 */
+ /* 在 `.field`（flex 列、默认 stretch）里不要被拉满 ——
+ * 四个按钮摊开一整格的样子不像选择器，像被撑坏的工具栏。
+ * 调音台控制条里是刻意要铺满的，那处单独覆盖。 */
 .segmented {
+  align-self: flex-start;
   display: inline-flex;
   background: var(--bg-2);
   border: 1px solid var(--stroke);

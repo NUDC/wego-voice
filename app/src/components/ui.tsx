@@ -154,3 +154,60 @@ export function Meter({
     </div>
   );
 }
+
+/**
+ * 一根滑杆 + 数值 + 听感说明。
+ *
+ * 参数本身对用户没有意义，说明才有 —— "+2.0 半音"远不如"声道更短、更细"。
+ *
+ * 数值**紧跟标签**而不是甩到行尾：面板可以有一千像素宽，两端对齐会让
+ * 「标签 → 把手 → 数值」横跨整屏才对得上。轨道同理要限宽，
+ * 更长的轨道不是更好调 —— 同样的像素位移对应更大的参数区间，反而更难瞄准。
+ */
+export function Knob({
+  label,
+  value,
+  min,
+  max,
+  step,
+  unit,
+  read,
+  onChange,
+  tone,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  read: string;
+  onChange: (v: number) => void;
+  tone?: "caution";
+}) {
+  return (
+    <div className="knob">
+      {/* 数值紧跟标签，而不是甩到行尾 ——
+          面板有一千像素宽，两端对齐会让眼睛横扫一整屏才对得上。 */}
+      <div className="knob-head">
+        <span className="knob-label">{label}</span>
+        <span className={`knob-val mono ${tone ? `tone-${tone}` : ""}`}>
+          {step < 1 && value > 0 ? "+" : ""}
+          {step < 1 ? value.toFixed(1) : value}
+          <em>{unit}</em>
+        </span>
+      </div>
+      <div className="knob-body">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+        <span className="knob-read">{read}</span>
+      </div>
+    </div>
+  );
+}
