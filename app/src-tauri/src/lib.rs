@@ -72,17 +72,15 @@ pub fn run(autostart: bool, f0_floor: f32) {
         // 三道防线：
         //   1. 托盘图标按引擎状态变色（灰/蓝/琥珀），提示文字写明声卡被独占。
         //      托盘从"锦上添花"变成了**承重件**。
-        //   2. 第一次关闭时由前端弹一次说明，并当场给「直接退出」的选项。
-        //   3. 标题栏关闭按钮的 tooltip 提前说清楚，不等用户点了才知道。
+        //   2. 标题栏关闭按钮的 tooltip 提前说清楚，不等用户点了才知道。
         //
-        // 这里 `prevent_close` 之后把决定权交给前端。**不加超时兜底** ——
-        // 前端万一没响应，托盘菜单的「退出」是纯 Rust 侧的，永远可用，
-        // 不存在"窗口关不掉又退不出"的死角。
+        // 隐藏这件事**全部在 Rust 侧做完**，不绕前端一圈：前端只要有一处
+        // 没响应，窗口就关不掉了。而托盘菜单的「退出 wego-voice」同样是
+        // 纯 Rust 侧的 —— 整条关闭/退出链路不依赖 WebView 是否健康。
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                use tauri::Emitter;
                 api.prevent_close();
-                let _ = window.emit("close-requested", ());
+                let _ = window.hide();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -98,8 +96,6 @@ pub fn run(autostart: bool, f0_floor: f32) {
             commands::stop_recording,
             commands::recording_status,
             commands::reveal_recordings,
-            commands::hide_window,
-            commands::quit_app,
             commands::list_recordings,
             commands::suggest_character,
             commands::characters_load,

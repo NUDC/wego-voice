@@ -151,27 +151,6 @@ pub fn set_params(state: State<AppState>, upd: ParamUpdate) -> Result<(), String
     Ok(())
 }
 
-// ─────────────────────────── 窗口 ───────────────────────────
-
-/// 收进托盘。引擎照常跑 —— 这正是关闭到托盘的意义。
-///
-/// 由前端在收到 `close-requested` 之后调用（见 lib.rs 的 on_window_event）。
-#[tauri::command]
-pub fn hide_window(window: tauri::Window) -> Result<(), String> {
-    window.hide().map_err(|e| e.to_string())
-}
-
-/// 真正退出。
-///
-/// **先停引擎再退**：独占模式下声卡被我们占着，不显式释放就得等进程
-/// 彻底收干净。靠 `Drop` 也能停，但退出路径上托管状态的析构时机没有保证 ——
-/// 而"关了程序系统还是没声音"是最难让用户联想到本程序的故障。
-#[tauri::command]
-pub fn quit_app(app: tauri::AppHandle, state: State<AppState>) {
-    state.stop();
-    app.exit(0);
-}
-
 // ─────────────────────────── 录音 ───────────────────────────
 
 #[derive(Debug, Clone, Serialize)]

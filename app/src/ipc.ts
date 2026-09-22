@@ -232,11 +232,6 @@ export const api = {
   measureLatency: (rounds: number) =>
     invoke<LatencyResult>("measure_latency", { rounds }),
 
-  /** 收进托盘。引擎照常跑 —— 这正是关闭到托盘的意义。 */
-  hideWindow: () => invoke<void>("hide_window"),
-  /** 真正退出。会先停引擎释放声卡。 */
-  quitApp: () => invoke<void>("quit_app"),
-
   startRecording: () => invoke<RecordingStatus>("start_recording"),
   stopRecording: () => invoke<RecordingStatus>("stop_recording"),
   recordingStatus: () => invoke<RecordingStatus>("recording_status"),
@@ -255,18 +250,6 @@ export const api = {
   applyCharacter: (character: Character) =>
     invoke<void>("apply_character", { character }),
 };
-
-/**
- * 订阅「用户点了关闭」。
- *
- * Rust 侧已经 `prevent_close`，窗口到底是收进托盘还是真退出，由这里决定。
- *
- * ⚠️ 前端万一没响应也不会把人锁死 —— 托盘菜单的「退出 wego-voice」
- * 是纯 Rust 侧的，永远可用。
- */
-export function onCloseRequested(cb: () => void): Promise<UnlistenFn> {
-  return listen("close-requested", () => cb());
-}
 
 /** 订阅 20Hz 的指标推送。返回取消订阅函数。 */
 export function onTick(cb: (t: Tick) => void): Promise<UnlistenFn> {
