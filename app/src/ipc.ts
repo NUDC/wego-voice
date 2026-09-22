@@ -165,6 +165,21 @@ export interface Character {
   builtin: boolean;
 }
 
+/**
+ * 录音状态。
+ *
+ * 录的是**干声**（采集侧原始输入），不是耳返里那个修正过的声音 ——
+ * 架构红线 2。修正音有损且不可逆，只存它等于永久放弃了换角色重来、
+ * 离线重新校准、以及送进声线转换的机会。
+ */
+export interface RecordingStatus {
+  recording: boolean;
+  seconds: number;
+  /** 因缓冲满而丢弃的样本数。**必须显示** —— 悄悄丢帧比录不上更糟。 */
+  dropped: number;
+  path: string | null;
+}
+
 export interface CharacterStore {
   characters: Character[];
   activeId: string;
@@ -180,6 +195,12 @@ export const api = {
   setParams: (upd: ParamUpdate) => invoke<void>("set_params", { upd }),
   measureLatency: (rounds: number) =>
     invoke<LatencyResult>("measure_latency", { rounds }),
+
+  startRecording: () => invoke<RecordingStatus>("start_recording"),
+  stopRecording: () => invoke<RecordingStatus>("stop_recording"),
+  recordingStatus: () => invoke<RecordingStatus>("recording_status"),
+  /** 在资源管理器里打开录音目录，返回路径。 */
+  revealRecordings: () => invoke<string>("reveal_recordings"),
 
   charactersLoad: () => invoke<CharacterStore>("characters_load"),
   charactersSave: (store: CharacterStore) =>

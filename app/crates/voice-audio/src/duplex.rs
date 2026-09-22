@@ -63,6 +63,7 @@ pub fn new(
     metrics: Arc<Metrics>,
     params: Arc<Params>,
     probe: Arc<ImpulseProbe>,
+    recorder_slot: crate::RecorderSlot,
 ) -> (CaptureHalf, RenderHalf, f32) {
     let hint = cfg.hint_block_frames as usize;
 
@@ -82,6 +83,16 @@ pub fn new(
 
     let t0 = Instant::now();
 
+    // 录音器在这里建：采集端拿 sink，控制端塞进共享槽位。
+    //
+    // 不从外面传 sink 进来，是因为 `backend::start` 为了抢独占设备会重试 4 次，
+    // 而 sink 不可克隆 —— 第一次尝试消耗掉之后重试就没得用了。
+    // 每次构造一对新的，最后成功的那次留在槽位里。
+    let (recorder, recorder_ctl) = crate::recorder::Recorder::new(cfg.sample_rate);
+    if let Ok(mut slot) = recorder_slot.lock() {
+        *slot = Some(recorder_ctl);
+    }
+
     let capture = CaptureHalf {
         producer,
         metrics: metrics.clone(),
@@ -92,6 +103,7 @@ pub fn new(
         sample_rate: cfg.sample_rate,
         hint_block: cfg.hint_block_frames,
         last_call: None,
+        recorder,
     };
 
     let render = RenderHalf {
@@ -134,6 +146,8 @@ pub struct CaptureHalf {
     sample_rate: u32,
     hint_block: u32,
     last_call: Option<Instant>,
+    /// 干声录音出口。见 recorder.rs 与架构红线 2。
+    recorder: crate::recorder::RecorderSink,
 }
 
 impl CaptureHalf {
@@ -170,6 +184,15 @@ impl CaptureHalf {
         self.metrics.actual_input_block.fetch_max(n as u32, REL);
 
         self.probe.scan_input(mono, self.t0);
+
+        // 录干声。
+        //
+        // 刻意接在**采集侧**、环形缓冲之前：这里拿到的是设备送来的原始信号，
+        // 没经过漂移补偿的丢帧/插帧，也没经过任何 DSP。
+        // 后续离线处理（重新校准、声线转换）要的就是这一份。
+        //
+        // 没在录音时 push 是纯空操作（一次原子读）。
+        self.recorder.push(mono);
 
         let mut dropped = 0u64;
         for &s in mono {

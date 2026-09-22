@@ -210,15 +210,26 @@ pub fn start(
     metrics: Arc<Metrics>,
     params: Arc<Params>,
     probe: Arc<ImpulseProbe>,
+    recorder_slot: crate::RecorderSlot,
 ) -> Result<Box<dyn Backend>> {
     match cfg.kind {
         BackendKind::Cpal => Ok(Box::new(cpal_backend::CpalBackend::start(
-            cfg, metrics, params, probe,
+            cfg,
+            metrics,
+            params,
+            probe,
+            recorder_slot,
         )?)),
 
         #[cfg(windows)]
         BackendKind::WasapiExclusive => Ok(Box::new(
-            wasapi_backend::WasapiExclusiveBackend::start(cfg, metrics, params, probe)?,
+            wasapi_backend::WasapiExclusiveBackend::start(
+                cfg,
+                metrics,
+                params,
+                probe,
+                recorder_slot,
+            )?,
         )),
 
         BackendKind::Auto => {
@@ -241,6 +252,9 @@ pub fn start(
                         metrics.clone(),
                         params.clone(),
                         probe.clone(),
+                        // 槽位可以反复传：每次尝试都会覆盖成一对新的录音器，
+                        // 成功那次留下来的才是接在真正跑起来的采集线程上的
+                        recorder_slot.clone(),
                     ) {
                         Ok(b) => return Ok(Box::new(b)),
                         Err(e) => {
@@ -264,7 +278,8 @@ pub fn start(
 
             // 退回兜底。⚠️ 必须把原因带上去 —— 延迟会差 2.5 倍，
             // UI 得能明确告诉用户"你现在跑在降级模式上，以及为什么"。
-            let mut b = cpal_backend::CpalBackend::start(cfg, metrics, params, probe)?;
+            let mut b =
+                cpal_backend::CpalBackend::start(cfg, metrics, params, probe, recorder_slot)?;
             b.set_fallback_reason(reason);
             Ok(Box::new(b))
         }

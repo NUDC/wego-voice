@@ -12,6 +12,7 @@ import {
   type Character,
   type DeviceList,
   type LatencyResult,
+  type RecordingStatus,
   type Tick,
 } from "./ipc";
 import { TitleBar, type View } from "./components/TitleBar";
@@ -52,6 +53,15 @@ export default function App() {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [activeId, setActiveId] = useState("");
   const [castError, setCastError] = useState("");
+
+  // 录音状态。Rust 侧持有录音器，这里只是它的镜像 ——
+  // 所以停止引擎、页面刷新之后都要重新查一次，不能凭前端记忆。
+  const [rec, setRec] = useState<RecordingStatus>({
+    recording: false,
+    seconds: 0,
+    dropped: 0,
+    path: null,
+  });
 
   useEffect(() => {
     api.devices().then(setDevices).catch((e) => setError(String(e)));
@@ -122,6 +132,31 @@ export default function App() {
 
   const running = tick.running && !!info;
   const active = characters.find((c) => c.id === activeId);
+
+  // 录音状态轮询。
+  //
+  // 只在录音时开定时器 —— 常驻 2Hz 轮询是白烧 CPU，
+  // 而这个应用的 CPU 预算是要留给音频线程的。
+  useEffect(() => {
+    if (!running) return;
+    const sync = () => api.recordingStatus().then(setRec).catch(() => {});
+    sync();
+    if (!rec.recording) return;
+    const id = window.setInterval(sync, 500);
+    return () => window.clearInterval(id);
+  }, [running, rec.recording]);
+
+  const toggleRecord = useCallback(async () => {
+    try {
+      setRec(rec.recording ? await api.stopRecording() : await api.startRecording());
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [rec.recording]);
+
+  const revealRecordings = useCallback(() => {
+    api.revealRecordings().catch((e) => setError(String(e)));
+  }, []);
 
   // 角色变化 → 立刻下发。
   //
@@ -320,6 +355,9 @@ export default function App() {
             onActiveId={setActiveId}
             onRetuneMs={(v) => activeId && patchCharacter(activeId, { retuneMs: v })}
             onManage={() => setView("cast")}
+            rec={rec}
+            onRecord={toggleRecord}
+            onReveal={revealRecordings}
             onStart={start}
             onStop={stop}
           />

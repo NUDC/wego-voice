@@ -126,6 +126,7 @@ impl WasapiExclusiveBackend {
         metrics: Arc<Metrics>,
         params: Arc<Params>,
         probe: Arc<ImpulseProbe>,
+        recorder_slot: crate::RecorderSlot,
     ) -> Result<Self> {
         init_com_tolerant()?;
 
@@ -169,6 +170,7 @@ impl WasapiExclusiveBackend {
             metrics.clone(),
             params,
             probe,
+            recorder_slot,
         );
 
         let info = BackendInfo {

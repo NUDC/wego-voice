@@ -68,6 +68,7 @@ impl CpalBackend {
         metrics: Arc<Metrics>,
         params: Arc<Params>,
         probe: Arc<ImpulseProbe>,
+        recorder_slot: crate::RecorderSlot,
     ) -> Result<Self> {
         let host = cpal::default_host();
 
@@ -133,6 +134,7 @@ impl CpalBackend {
             metrics,
             params,
             probe,
+            recorder_slot,
         );
 
         // 回调里不许分配，预留足够大的暂存区

@@ -55,6 +55,8 @@ struct Shared {
     params: Arc<Params>,
     probe: Arc<ImpulseProbe>,
     info: BackendInfo,
+    /// 录音器槽位。和 params/probe 一样是 Arc，引擎换了就跟着换。
+    recorder: voice_audio::RecorderSlot,
 }
 
 impl AppState {
@@ -72,6 +74,7 @@ impl AppState {
             metrics: engine.metrics.clone(),
             params: engine.params.clone(),
             probe: engine.probe.clone(),
+            recorder: engine.recorder.clone(),
             info: info.clone(),
         });
         *self.engine.lock().unwrap() = Some(engine);
@@ -98,6 +101,10 @@ impl AppState {
 
     pub fn probe(&self) -> Option<Arc<ImpulseProbe>> {
         self.shared.lock().unwrap().as_ref().map(|s| s.probe.clone())
+    }
+
+    pub fn recorder(&self) -> Option<voice_audio::RecorderSlot> {
+        self.shared.lock().unwrap().as_ref().map(|s| s.recorder.clone())
     }
 
     pub fn metrics(&self) -> Option<Arc<Metrics>> {

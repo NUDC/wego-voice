@@ -166,6 +166,13 @@ struct AudioOpts {
     #[arg(long, global = true)]
     pitch_shift: Option<f32>,
 
+    /// 压测时同时录干声到指定文件（WAV，32-bit float 单声道）。
+    ///
+    /// 这条路径的单元测试只覆盖了 WAV 写入器本身；
+    /// **真实采集线程有没有喂进来，只能这样实跑验证**。
+    #[arg(long, global = true)]
+    record: Option<String>,
+
     /// 噪声门余量（dB）。人声要高出实测本底这么多才进入音高检测。
     /// 0 = 关掉门。默认 12。
     #[arg(long, global = true)]
@@ -220,6 +227,7 @@ struct Args {
     pitch_shift: Option<f32>,
     formant_shift: Option<f32>,
     noise_gate_db: Option<f32>,
+    record: Option<String>,
     muted: bool,
     f0_floor: f32,
     backend: BackendKind,
@@ -241,6 +249,7 @@ impl Args {
             pitch_shift: audio.pitch_shift,
             formant_shift: audio.formant_shift,
             noise_gate_db: audio.noise_gate_db,
+            record: audio.record.clone(),
             muted: audio.mute,
             f0_floor: audio.f0_floor,
             backend: audio.backend,
@@ -405,7 +414,28 @@ fn run(args: &Args, measure: bool) -> Result<()> {
         measure_latency(&engine, args.latency_rounds)?;
     }
 
+    if let Some(path) = &args.record {
+        engine.start_recording(path)?;
+        println!("● 开始录干声 → {path}");
+    }
+
     run_soak(&engine, args.duration)?;
+
+    if args.record.is_some() {
+        let (_, secs, dropped, path) = engine.recording_status();
+        engine.stop_recording()?;
+        println!("■ 录音结束：{secs:.2} 秒，丢弃 {dropped} 样本");
+        if let Some(p) = path {
+            match std::fs::metadata(&p) {
+                Ok(md) => println!("   {} （{} 字节）", p.display(), md.len()),
+                Err(e) => println!("   ⚠️ 文件不可读：{e}"),
+            }
+        }
+        if dropped > 0 {
+            println!("   ⚠️ 有丢帧，文件里会有细微断裂");
+        }
+    }
+
     print_report(&engine, args);
     Ok(())
 }

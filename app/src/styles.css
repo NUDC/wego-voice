@@ -1014,6 +1014,49 @@ button.btn {
   border-color: #6b3a44;
 }
 
+/* 录制按钮。红点常驻占位，录音时才亮并脉动 ——
+   出现/消失会让按钮宽度跳变。 */
+.btn.rec .rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-4);
+  flex: 0 0 auto;
+  transition: background var(--fast);
+}
+
+.btn.rec.on {
+  border-color: #5a2b32;
+  background: rgba(240, 90, 90, 0.1);
+  color: #f0a29c;
+}
+
+.btn.rec.on .rec-dot {
+  background: #ef5350;
+  animation: rec-pulse 1.4s var(--ease) infinite;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* 正文里的行内按钮，看起来像链接 */
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 /* 耳返开启是有风险的状态（可能啸叫），按钮本身要显出来 */
 .btn.hot {
   border-color: rgba(242, 181, 60, 0.38);

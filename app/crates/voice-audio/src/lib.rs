@@ -20,12 +20,24 @@ pub mod latency;
 pub mod metrics;
 pub mod params;
 pub mod priority;
+pub mod recorder;
 
 pub use backend::{BackendConfig, BackendInfo, BackendKind};
 pub use engine::{list_devices, AudioEngine, DeviceList, EngineConfig};
 pub use latency::{ImpulseProbe, LatencyStats};
 pub use metrics::{Metrics, MetricsSnapshot};
 pub use params::{parse_key, Params};
+pub use recorder::{timestamped_name, Recorder, RecorderSink, RecorderState};
+
+/// 录音器的共享槽位。
+///
+/// 采集端（`RecorderSink`）住在音频线程里，控制端（`Recorder`）住在这里。
+/// 用 `Option` 是因为它在 `duplex::new` 里才被创建 ——
+/// 而后端为抢独占设备会重试，每次重试都会覆盖成一对新的。
+///
+/// ⚠️ 这把锁**只允许控制线程碰**（开始/停止录音、查状态）。
+/// 音频线程走的是 `RecorderSink`，那条路上一个锁都没有。
+pub type RecorderSlot = std::sync::Arc<std::sync::Mutex<Option<Recorder>>>;
 
 /// Phase 0 的判定阈值，集中在这里，避免散落在各处各写一份。
 ///

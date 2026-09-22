@@ -75,6 +75,12 @@ pub struct AudioEngine {
     pub metrics: Arc<Metrics>,
     pub params: Arc<Params>,
     pub probe: Arc<ImpulseProbe>,
+    /// 干声录音器。见 `recorder.rs` 与架构红线 2。
+    ///
+    /// 用共享槽位而不是直接持有：录音器的采集端要交给 `duplex` 里的
+    /// `CaptureHalf`，而后端为了抢独占设备会重试 —— 每次重试都会
+    /// 重建一对，成功那次留在槽位里。锁只被控制线程碰，音频线程永不加锁。
+    pub recorder: crate::RecorderSlot,
 }
 
 impl AudioEngine {
@@ -84,11 +90,14 @@ impl AudioEngine {
         let sr = cfg.sample_rate.unwrap_or(48_000) as f32;
         let probe = Arc::new(ImpulseProbe::new(sr));
 
+        let recorder: crate::RecorderSlot = Default::default();
+
         let backend = backend::start(
             &cfg.to_backend(),
             metrics.clone(),
             params.clone(),
             probe.clone(),
+            recorder.clone(),
         )?;
 
         Ok(Self {
@@ -96,6 +105,7 @@ impl AudioEngine {
             metrics,
             params,
             probe,
+            recorder,
         })
     }
 
@@ -116,6 +126,52 @@ impl AudioEngine {
     /// 理论端到端延迟（毫秒）。不含驱动与硬件固有延迟，是乐观下界。
     pub fn theoretical_latency_ms(&self) -> f32 {
         self.backend.info().theoretical_latency_ms()
+    }
+
+    /// 开始录干声。返回落盘路径。
+    ///
+    /// 录的是**采集侧的原始输入**，不是耳返里那个修正过的声音 ——
+    /// 架构红线 2。详见 `recorder.rs` 的模块文档。
+    pub fn start_recording(&self, path: impl AsRef<std::path::Path>) -> Result<()> {
+        let mut slot = self
+            .recorder
+            .lock()
+            .map_err(|_| anyhow::anyhow!("录音器锁已中毒"))?;
+        let rec = slot
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("录音器尚未就绪"))?;
+        rec.start(path)
+    }
+
+    /// 停止录音，返回文件路径。会等写入线程把尾巴写完并补好 WAV 头。
+    pub fn stop_recording(&self) -> Result<Option<std::path::PathBuf>> {
+        let mut slot = self
+            .recorder
+            .lock()
+            .map_err(|_| anyhow::anyhow!("录音器锁已中毒"))?;
+        match slot.as_mut() {
+            Some(rec) => rec.stop(),
+            None => Ok(None),
+        }
+    }
+
+    /// 录音状态：(是否在录, 已录秒数, 丢弃样本数, 当前文件)。
+    ///
+    /// 丢弃数必须一路暴露到 UI：**录音悄悄丢帧比录不上更糟** ——
+    /// 用户会拿着一份有细微断裂的素材去做后续处理，而且永远查不出原因。
+    pub fn recording_status(&self) -> (bool, f32, u64, Option<std::path::PathBuf>) {
+        let Ok(slot) = self.recorder.lock() else {
+            return (false, 0.0, 0, None);
+        };
+        match slot.as_ref() {
+            Some(r) => (
+                r.is_recording(),
+                r.elapsed_secs(),
+                r.state().dropped.load(std::sync::atomic::Ordering::Relaxed),
+                r.current_path().map(|p| p.to_path_buf()),
+            ),
+            None => (false, 0.0, 0, None),
+        }
     }
 
     /// 输出侧实际块大小（帧）。

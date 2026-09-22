@@ -26,7 +26,7 @@
 import type { PitchSample } from "./PitchDisplay";
 import { PitchDisplay } from "./PitchDisplay";
 import { Field, Meter, Segmented } from "./ui";
-import type { Character, DeviceList } from "../ipc";
+import type { Character, DeviceList, RecordingStatus } from "../ipc";
 
 export interface TunerProps {
   running: boolean;
@@ -53,8 +53,18 @@ export interface TunerProps {
   /** 跳到角色管理页。 */
   onManage: () => void;
 
+  /** 录音。录的是干声 —— 见 ipc.ts 的 RecordingStatus 说明。 */
+  rec: RecordingStatus;
+  onRecord: () => void;
+  onReveal: () => void;
+
   onStart: () => void;
   onStop: () => void;
+}
+
+function mmss(secs: number) {
+  const s = Math.max(0, Math.floor(secs));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
 export function TunerView(p: TunerProps) {
@@ -179,6 +189,22 @@ export function TunerView(p: TunerProps) {
 
         {/* 动作列：跨两行，位置固定。 */}
         <div className="console-act">
+          {/* 录音是通往「录完再换声线」那条路的入口，
+              所以它必须在主界面上，不能藏进诊断页。 */}
+          <button
+            className={`btn rec ${p.rec.recording ? "on" : ""}`}
+            onClick={p.onRecord}
+            disabled={!p.running || p.busy}
+            title={
+              p.rec.recording
+                ? "停止并保存"
+                : "录制干声 —— 声线转换与离线校准都用它"
+            }
+          >
+            <span className="rec-dot" />
+            {p.rec.recording ? mmss(p.rec.seconds) : "录制"}
+          </button>
+
           <button
             className={`btn mon ${p.muted ? "" : "hot"}`}
             onClick={() => p.onMuted(!p.muted)}
@@ -201,9 +227,32 @@ export function TunerView(p: TunerProps) {
           </button>
         </div>
 
-        {/* 说明行永远存在，只换内容 —— 否则出现/消失会把整个控制台顶动。 */}
-        <p className={`console-note ${!p.running || p.muted ? "" : "warn"}`}>
-          {!p.running ? (
+        {/* 说明行永远存在，只换内容 —— 否则出现/消失会把整个控制台顶动。
+            优先级：丢帧 > 录音中 > 已保存 > 耳返状态。 */}
+        <p
+          className={`console-note ${
+            p.rec.dropped > 0 || (p.running && !p.muted) ? "warn" : ""
+          }`}
+        >
+          {p.rec.dropped > 0 ? (
+            <>
+              ⚠️ 录音<b>丢了 {p.rec.dropped} 个样本</b> ——
+              文件里会有细微断裂。多半是磁盘被占住了（杀毒扫描、同步盘）。
+              这一条必须报出来：拿着有断裂的素材去做后续处理，事后根本查不出原因。
+            </>
+          ) : p.rec.recording ? (
+            <>
+              正在录<b>干声</b>（不是耳返里那个修正过的声音）——
+              换角色重来、离线重新校准、声线转换，都要从这份原始素材出发。
+            </>
+          ) : p.rec.path ? (
+            <>
+              已保存：
+              <button className="link" onClick={p.onReveal} type="button">
+                打开录音文件夹
+              </button>
+            </>
+          ) : !p.running ? (
             <>
               <b>请戴有线耳机</b>：蓝牙做不了实时耳返，延迟是无线协议的物理限制。
               设备与模式会在启动后锁定，角色和修正速度则随时可调。

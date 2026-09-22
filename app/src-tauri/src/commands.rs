@@ -146,6 +146,116 @@ pub fn set_params(state: State<AppState>, upd: ParamUpdate) -> Result<(), String
     Ok(())
 }
 
+// ─────────────────────────── 录音 ───────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingStatus {
+    pub recording: bool,
+    pub seconds: f32,
+    /// 因缓冲满而丢弃的样本数。
+    ///
+    /// **必须显示。** 悄悄丢帧比录不上更糟 —— 用户会拿着一份有细微断裂的
+    /// 素材去做后续处理，而且永远查不出原因。
+    pub dropped: u64,
+    pub path: Option<String>,
+}
+
+/// 录音存放目录：`<音频目录>/wego-voice/`。
+///
+/// 放系统音频目录而不是 App 数据目录：录下来的是**用户的素材**，
+/// 卸载软件不该把它带走，用户也该能在文件管理器里直接找到。
+fn recordings_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let base = app
+        .path()
+        .audio_dir()
+        .or_else(|_| app.path().document_dir())
+        .map_err(|e| format!("取音频目录失败：{e}"))?;
+    Ok(base.join("wego-voice"))
+}
+
+#[tauri::command]
+pub fn start_recording(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<RecordingStatus, String> {
+    let slot = state.recorder().ok_or("引擎未启动")?;
+    let dir = recordings_dir(&app)?;
+
+    // 用 UNIX 时间戳命名。序号方案要先扫目录，而且用户删掉中间某个之后会重复。
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("系统时钟异常：{e}"))?
+        .as_secs();
+    let path = dir.join(voice_audio::timestamped_name(secs));
+
+    {
+        let mut g = slot.lock().map_err(|_| "录音器锁已中毒")?;
+        let rec = g.as_mut().ok_or("录音器尚未就绪")?;
+        rec.start(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(recording_status(state))
+}
+
+#[tauri::command]
+pub fn stop_recording(state: State<AppState>) -> Result<RecordingStatus, String> {
+    let slot = state.recorder().ok_or("引擎未启动")?;
+    let saved = {
+        let mut g = slot.lock().map_err(|_| "录音器锁已中毒")?;
+        match g.as_mut() {
+            Some(rec) => rec.stop().map_err(|e| e.to_string())?,
+            None => None,
+        }
+    };
+    Ok(RecordingStatus {
+        recording: false,
+        seconds: 0.0,
+        dropped: 0,
+        path: saved.map(|p| p.to_string_lossy().into_owned()),
+    })
+}
+
+#[tauri::command]
+pub fn recording_status(state: State<AppState>) -> RecordingStatus {
+    let none = RecordingStatus {
+        recording: false,
+        seconds: 0.0,
+        dropped: 0,
+        path: None,
+    };
+    let Some(slot) = state.recorder() else {
+        return none;
+    };
+    let Ok(g) = slot.lock() else { return none };
+    match g.as_ref() {
+        Some(r) => RecordingStatus {
+            recording: r.is_recording(),
+            seconds: r.elapsed_secs(),
+            dropped: r.state().dropped.load(std::sync::atomic::Ordering::Relaxed),
+            path: r.current_path().map(|p| p.to_string_lossy().into_owned()),
+        },
+        None => none,
+    }
+}
+
+/// 在文件管理器里打开录音目录。
+///
+/// 录完之后"文件在哪"是第一个问题，不该让用户自己去猜路径。
+#[tauri::command]
+pub fn reveal_recordings(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = recordings_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败：{e}"))?;
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("打开资源管理器失败：{e}"))?;
+    }
+    Ok(dir.to_string_lossy().into_owned())
+}
+
 // ─────────────────────────── 角色 ───────────────────────────
 
 /// 读角色库。任何失败都退回内置角色，不向前端报错 ——
