@@ -31,7 +31,72 @@ const TICK_HZ: u32 = 20;
 ///
 /// `autostart` 为真时开窗即启动引擎 —— 给两类人用：
 /// 想一打开就能唱的用户，以及要做自动化验证的我们。
+/// WebView2 运行时缺失时弹个原生对话框，然后退出。
+///
+/// # 为什么值得为它写这段
+///
+/// 免安装版是**单个 exe**，没有安装器去引导安装 WebView2。
+/// 缺了它，Tauri 建窗口会失败，而这是个 `windows_subsystem = "windows"`
+/// 的程序 —— 没有控制台、stderr 进黑洞，用户看到的是
+/// **双击之后什么都没发生**。这是最难自查的一类故障。
+///
+/// Win10 较新版本与 Win11 都自带 WebView2（随 Edge 分发），
+/// 所以绝大多数人碰不到；但碰到的那个人，必须知道原因。
+///
+/// 用 `MessageBoxW` 而不是引入对话框插件：这段代码要在 Tauri 起来**之前**
+/// 跑，那时什么插件都还没初始化；而且为一句话拉一个依赖不划算。
+#[cfg(windows)]
+fn webview2_missing_dialog(err: &str) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(
+            hwnd: *mut core::ffi::c_void,
+            text: *const u16,
+            caption: *const u16,
+            utype: u32,
+        ) -> i32;
+    }
+
+    let wide = |s: &str| {
+        OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>()
+    };
+
+    let text = format!(
+        "缺少 Microsoft Edge WebView2 运行时，界面无法启动。
+
+         请安装「Microsoft Edge WebView2 Runtime」（微软官方免费组件，
+         搜索该名称即可下载）后重新打开本程序。
+
+         Windows 11 与较新的 Windows 10 一般自带该组件。
+
+         技术细节：{err}"
+    );
+    // 0x10 = MB_ICONERROR
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            wide(&text).as_ptr(),
+            wide("wego-voice 无法启动").as_ptr(),
+            0x10,
+        );
+    }
+}
+
 pub fn run(autostart: bool, f0_floor: f32) {
+    // 先探一下 WebView2 在不在。失败就给出人话，而不是静默什么都不发生。
+    if let Err(e) = tauri::webview_version() {
+        log::error!("WebView2 运行时不可用：{e}");
+        #[cfg(windows)]
+        webview2_missing_dialog(&e.to_string());
+        std::process::exit(1);
+    }
+
     tauri::Builder::default()
         .manage(AppState::default())
         .setup(move |app| {

@@ -244,7 +244,7 @@ npm run preview # 本地验收构建产物
 | 流水线 | 触发 | 干什么 |
 |---|---|---|
 | `build.yml` | 推 `app/**` | Windows 上跑 tsc + 测试 + clippy + 打安装包，产物存 artifact |
-| `release.yml` | 推 `v*` tag | 同上，然后建 GitHub Release 并附安装包，再触发官网重新部署 |
+| `release.yml` | 推 `v*` tag | 同上，然后建 GitHub Release，附**免安装 exe + 安装包**，再刷新官网 |
 | `pages.yml` | 推 `site/**`、或被 release 调用 | 构建官网并发到 Pages |
 
 ### 发一个版本
@@ -264,6 +264,41 @@ git push origin v0.1.0
 **tag 与 `tauri.conf.json` 的版本号不一致时 CI 直接失败。** 不校验的话会出现
 「Release 叫 v0.2.0，装完打开显示 0.1.0」——用户报 bug 时说的版本号是错的，
 排查直接跑偏。
+
+### 两份产物
+
+| | 文件 | 给谁 |
+|---|---|---|
+| **免安装**（官网主按钮） | `wego-voice_<ver>_x64.exe` | 单文件，双击就能用。不写注册表、不留卸载项 |
+| 安装版 | `..._x64-setup.exe` | 要开始菜单项和卸载入口的人 |
+
+Tauri 的 exe 本身就把前端资源嵌进去了，拷哪儿都能跑 —— 免安装版就是它，
+只是改了个带版本号的对外名字（cargo 的内部名 `wego-voice-app.exe`
+躺在下载目录里毫无辨识度）。
+
+⚠️ **两者唯一的实质差别是 WebView2 运行时**：安装版能引导安装它，
+免安装版不能。缺了它 Tauri 建窗口会失败，而这是个
+`windows_subsystem = "windows"` 的程序 —— 没有控制台、stderr 进黑洞，
+用户看到的是**双击之后什么都没发生**。
+
+所以 `lib.rs` 在 Tauri 起来**之前**先探一次 `webview_version()`，
+失败就用 `MessageBoxW` 弹原生对话框说明原因。这是免安装版唯一的真实坑，
+必须堵上。
+
+### 🔴 发版时 Pages 部署踩过的坑
+
+v0.1.0 的发版流程**失败了**（Release 建出来了，官网没刷新）：
+
+```
+Tag "v0.1.0" is not allowed to deploy to github-pages
+due to environment protection rules.
+```
+
+原因：把 `pages.yml` 当**可复用工作流**从 tag 触发的 run 里调用，
+会继承 tag 的 ref，而 `github-pages` 环境默认只允许默认分支部署。
+
+改成 `gh workflow run pages.yml --ref main` **派发**一次 ——
+跑在 main 的上下文里，规则自然满足。
 
 ### 安装包不在 GitHub Pages 上
 

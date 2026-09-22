@@ -5,8 +5,11 @@ name: 官网部署到 GitHub Pages
 # 这个仓库里 app/ 是 Rust + Tauri 桌面应用，跟官网完全无关 ——
 # 改一行 DSP 就重跑一次前端构建纯属浪费额度。
 #
-# `workflow_call` 是给发版流程用的：Release 发出去之后要重新部署，
-# 把新的版本号和下载链接烤进 HTML（官网是零 JS 的静态页）。
+# `workflow_dispatch` 是发版流程用的：Release 发出去之后由 release.yml
+# 派发一次，把新的版本号与下载链接烤进 HTML（官网是零 JS 的静态页）。
+#
+# ⚠️ 发版流程必须**派发**而不是把本文件当可复用工作流调用 ——
+# 复用调用会继承 tag 的 ref，而 `github-pages` 环境只允许默认分支部署。
 on:
   push:
     branches: [main]
@@ -14,7 +17,6 @@ on:
       - "site/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read
@@ -49,15 +51,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           json=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" 2>/dev/null || true)
-          tag=""; date=""; url=""; size=""; name=""
+          tag=""; date=""; url=""; size=""; name=""; surl=""; ssize=""
           if [ -n "$json" ]; then
             tag=$(printf '%s' "$json" | jq -r '.tag_name // empty')
             date=$(printf '%s' "$json" | jq -r '.published_at // empty' | cut -dT -f1)
-            asset=$(printf '%s' "$json" | jq -c '[.assets[]? | select(.name | endswith(".exe"))][0] // empty')
-            if [ -n "$asset" ]; then
-              url=$(printf '%s'  "$asset" | jq -r '.browser_download_url')
-              size=$(printf '%s' "$asset" | jq -r '.size')
-              name=$(printf '%s' "$asset" | jq -r '.name')
+
+            # 免安装版 = .exe 且**不**以 -setup.exe 结尾。
+            # 官网主按钮给它 —— 工具类用户偏好拷了就跑。
+            a=$(printf '%s' "$json" | jq -c               '[.assets[]? | select(.name | endswith(".exe")) | select(.name | endswith("-setup.exe") | not)][0] // empty')
+            if [ -n "$a" ]; then
+              url=$(printf '%s'  "$a" | jq -r '.browser_download_url')
+              size=$(printf '%s' "$a" | jq -r '.size')
+              name=$(printf '%s' "$a" | jq -r '.name')
+            fi
+
+            b=$(printf '%s' "$json" | jq -c '[.assets[]? | select(.name | endswith("-setup.exe"))][0] // empty')
+            if [ -n "$b" ]; then
+              surl=$(printf '%s'  "$b" | jq -r '.browser_download_url')
+              ssize=$(printf '%s' "$b" | jq -r '.size')
             fi
           fi
           {
@@ -66,6 +77,8 @@ jobs:
             echo "VITE_RELEASE_URL=$url"
             echo "VITE_RELEASE_SIZE=$size"
             echo "VITE_RELEASE_FILE=$name"
+            echo "VITE_RELEASE_SETUP_URL=$surl"
+            echo "VITE_RELEASE_SETUP_SIZE=$ssize"
           } >> "$GITHUB_ENV"
           echo "最新 Release：${tag:-（还没有）}"
 

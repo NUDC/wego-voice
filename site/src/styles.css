@@ -881,3 +881,10 @@ footer {
 .foot .spacer {
   margin-left: auto;
 }
+
+.release-hint {
+  margin: 14px 0 0;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--faint);
+}

@@ -212,15 +212,31 @@ export function Download() {
           </span>
         </div>
 
+        {/* 主按钮给免安装版：目标用户是"要把唱的东西做成成品的人"，
+            这类人普遍偏好拷了就跑、不写注册表的单文件。 */}
         <a className="btn primary big" href={RELEASE.url}>
-          下载安装包
+          下载免安装版
         </a>
+        <p className="release-hint">
+          单个 exe，双击就能用 · 不写注册表、不留卸载项
+          {RELEASE.setupUrl && (
+            <>
+              <br />
+              要开始菜单项和卸载入口？
+              <a href={RELEASE.setupUrl}>下载安装版</a>
+              {RELEASE.setupSize && `（${RELEASE.setupSize}）`}
+            </>
+          )}
+        </p>
 
         {/* 没有代码签名，SmartScreen 必弹。事先说清楚，
             比让用户以为下到了病毒强。 */}
         <p className="note">
-          安装包<strong>未做代码签名</strong>，Windows 会弹「已保护你的电脑」——
+          <strong>未做代码签名</strong>，Windows 会弹「已保护你的电脑」——
           点「更多信息 → 仍要运行」。Release 页附有 SHA256 可自行核对。
+          <br />
+          免安装版需要系统已有 <b>Microsoft Edge WebView2 运行时</b>
+          （Win11 与较新的 Win10 自带）。缺失时程序会弹窗说明，不会静默失败。
         </p>
         <p className="note">
           <a href={`${REPO}/releases`}>所有版本与更新说明</a>

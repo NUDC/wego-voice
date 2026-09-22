@@ -146,11 +146,14 @@ export const REPO = "https://github.com/NUDC/wego-voice";
 export interface Release {
   tag: string;
   date: string;
-  /** 安装包直链。空串表示还没有可下载的版本。 */
+  /** **免安装单文件**直链。空串表示还没有可下载的版本。 */
   url: string;
   file: string;
   /** 人类可读的大小，如 "8.4 MB"。 */
   size: string;
+  /** 安装版（NSIS）直链。 */
+  setupUrl: string;
+  setupSize: string;
 }
 
 function humanSize(bytes: string | undefined): string {
@@ -171,6 +174,8 @@ export const RELEASE: Release = {
   url: import.meta.env.VITE_RELEASE_URL ?? "",
   file: import.meta.env.VITE_RELEASE_FILE ?? "",
   size: humanSize(import.meta.env.VITE_RELEASE_SIZE),
+  setupUrl: import.meta.env.VITE_RELEASE_SETUP_URL ?? "",
+  setupSize: humanSize(import.meta.env.VITE_RELEASE_SETUP_SIZE),
 };
 
 export const FAQ: FaqItem[] = [

@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write # 建 Release 要写权限
+  actions: write # 发版后要派发官网部署
 
 jobs:
   release:
@@ -57,17 +58,37 @@ jobs:
       - name: 构建安装包
         run: npm run tauri build
 
-      # SHA256 让用户能自己核对下载到的文件。
-      # 安装包**没有代码签名**，SmartScreen 会拦 —— 校验和是目前唯一的自证手段。
-      - name: 计算校验和
+      # 出两份产物：
+      #
+      #   1. **免安装单文件** —— Tauri 的 exe 本身就把前端资源嵌进去了，
+      #      拷哪儿都能跑。工具类用户基本都偏好这种：不写注册表、不留卸载项、
+      #      放 U 盘里也行。
+      #   2. 安装包 —— 要开始菜单项和卸载入口的人用。
+      #
+      # ⚠️ 两者唯一的实质差别是 **WebView2**：安装包能引导安装它，
+      # 免安装版不能（程序内会弹原生对话框说明，见 lib.rs）。
+      #
+      # 顺带把 cargo 的内部二进制名 `wego-voice-app.exe` 改成带版本号的
+      # 对外名字 —— 用户下载目录里躺着一堆 exe 时，名字是唯一的线索。
+      - name: 整理产物并计算校验和
         id: pkg
         shell: bash
         run: |
-          exe=$(ls target/release/bundle/nsis/*-setup.exe | head -1)
-          sha=$(sha256sum "$exe" | cut -d' ' -f1)
-          echo "path=$exe" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$exe")" >> "$GITHUB_OUTPUT"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          ver="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          cp target/release/wego-voice-app.exe "dist/wego-voice_${ver}_x64.exe"
+          cp target/release/bundle/nsis/*-setup.exe "dist/wego-voice_${ver}_x64-setup.exe"
+
+          {
+            echo "portable=dist/wego-voice_${ver}_x64.exe"
+            echo "portable_name=wego-voice_${ver}_x64.exe"
+            echo "portable_sha=$(sha256sum "dist/wego-voice_${ver}_x64.exe" | cut -d' ' -f1)"
+            echo "setup=dist/wego-voice_${ver}_x64-setup.exe"
+            echo "setup_name=wego-voice_${ver}_x64-setup.exe"
+            echo "setup_sha=$(sha256sum "dist/wego-voice_${ver}_x64-setup.exe" | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+          ls -lh dist/
 
       - name: 建 Release
         shell: bash
@@ -100,13 +121,25 @@ jobs:
           - 往返延迟的脉冲实测尚未完成（缺回环线）。29.92 ms 是
             理论下界 + 分段实测，不含驱动与硬件固有延迟。
 
-          ## 安装
+          ## 下载哪个
 
-          下载下面的 `.exe` 双击安装。**仅 Windows 10 / 11。**
+          **仅 Windows 10 / 11（x64）。**
 
-          > ⚠️ **安装包未做代码签名**，Windows SmartScreen 会弹「已保护你的电脑」。
+          | | 文件 | 说明 |
+          |---|---|---|
+          | **免安装**（推荐） | `..._x64.exe` | 单文件，双击就能用。不写注册表、不留卸载项，拷走即可 |
+          | 安装版 | `..._x64-setup.exe` | 装到程序目录，带开始菜单项与卸载入口 |
+
+          两者功能完全一样，唯一实质差别是 **WebView2 运行时**：
+          安装版会在缺失时引导你装，免安装版不会（但会弹窗说明原因）。
+          Windows 11 与较新的 Windows 10 都自带该组件，一般不用管。
+
+          > ⚠️ **两份都未做代码签名**，Windows SmartScreen 会弹「已保护你的电脑」。
           > 点「更多信息 → 仍要运行」即可。代码签名证书还没买，这一条会一直存在。
           > 不放心的话用下面的 SHA256 自行核对。
+
+          配置与角色库存在 `%APPDATA%\com.wego.voice\`，录音存在
+          `音乐\wego-voice\` —— **免安装版也一样**，不随 exe 走。
 
           ## 用之前请确认
 
@@ -117,20 +150,28 @@ jobs:
 
           ## 校验和
           NOTE
-          printf '\n```\nSHA256  %s\n  %s\n```\n' \
-            "${{ steps.pkg.outputs.sha }}" "${{ steps.pkg.outputs.name }}" >> notes.md
+          printf '\n```\n%s\n  %s\n\n%s\n  %s\n```\n' \
+            "${{ steps.pkg.outputs.portable_sha }}" "${{ steps.pkg.outputs.portable_name }}" \
+            "${{ steps.pkg.outputs.setup_sha }}"    "${{ steps.pkg.outputs.setup_name }}" \
+            >> notes.md
 
           gh release create "$GITHUB_REF_NAME" \
-            "${{ steps.pkg.outputs.path }}" \
+            "${{ steps.pkg.outputs.portable }}" \
+            "${{ steps.pkg.outputs.setup }}" \
             --title "$GITHUB_REF_NAME" \
             --notes-file notes.md
 
-  # Release 发出去之后重新部署官网，把版本号与下载链接刷新上去。
-  # 官网是零 JS 的静态页，版本信息是**构建期**烤进 HTML 的。
-  site:
-    needs: release
-    uses: ./.github/workflows/pages.yml
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
+      # Release 发出去之后刷新官网：版本号与下载链接是**构建期**烤进 HTML 的
+      # （官网零 JS，见 site/src/entry-server.tsx），不重新部署就还停在旧版本。
+      #
+      # ⚠️ 必须**派发到 main**，不能把 pages.yml 当可复用工作流在这里调用。
+      # v0.1.0 就栽在这上面：复用调用会继承 tag 的 ref，而 `github-pages`
+      # 环境默认只允许默认分支部署，于是被拒：
+      #   Tag "v0.1.0" is not allowed to deploy to github-pages
+      #   due to environment protection rules.
+      # 派发一次跑在 main 的上下文里，规则自然满足。
+      - name: 刷新官网
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
