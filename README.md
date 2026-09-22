@@ -244,7 +244,7 @@ npm run preview # 本地验收构建产物
 | 流水线 | 触发 | 干什么 |
 |---|---|---|
 | `build.yml` | 推 `app/**` | Windows 上跑 tsc + 测试 + clippy + 打安装包，产物存 artifact |
-| `release.yml` | 推 `v*` tag | 同上，然后建 GitHub Release，附**免安装 exe + 安装包**，再刷新官网 |
+| `release.yml` | 推 `v*` tag | 同上，然后建 GitHub Release 附**免安装 exe**，再刷新官网 |
 | `pages.yml` | 推 `site/**`、或被 release 调用 | 构建官网并发到 Pages |
 
 ### 发一个版本
@@ -265,25 +265,25 @@ git push origin v0.1.0
 「Release 叫 v0.2.0，装完打开显示 0.1.0」——用户报 bug 时说的版本号是错的，
 排查直接跑偏。
 
-### 两份产物
+### 只发免安装单文件
 
-| | 文件 | 给谁 |
-|---|---|---|
-| **免安装**（官网主按钮） | `wego-voice_<ver>_x64.exe` | 单文件，双击就能用。不写注册表、不留卸载项 |
-| 安装版 | `..._x64-setup.exe` | 要开始菜单项和卸载入口的人 |
+`tauri.conf.json` 里 `bundle.active = false` —— 不做安装包。
 
-Tauri 的 exe 本身就把前端资源嵌进去了，拷哪儿都能跑 —— 免安装版就是它，
-只是改了个带版本号的对外名字（cargo 的内部名 `wego-voice-app.exe`
-躺在下载目录里毫无辨识度）。
+Tauri 的 exe 本身就把前端资源嵌进去了，拷哪儿都能跑。发布时只是改了个
+带版本号的对外名字：cargo 的内部名 `wego-voice-app.exe` 躺在下载目录里
+毫无辨识度。
 
-⚠️ **两者唯一的实质差别是 WebView2 运行时**：安装版能引导安装它，
-免安装版不能。缺了它 Tauri 建窗口会失败，而这是个
-`windows_subsystem = "windows"` 的程序 —— 没有控制台、stderr 进黑洞，
-用户看到的是**双击之后什么都没发生**。
+目标用户是「要把唱的东西做成成品的人」—— 这类人普遍偏好拷了就跑、
+不写注册表的单文件。顺带省掉 CI 里下载 NSIS 工具链那几十秒。
+
+⚠️ **代价是 WebView2 没人兜底了。** 安装包本来能在缺失时引导安装它，
+现在这条路没了。而缺了它 Tauri 建窗口会失败 —— 这是个
+`windows_subsystem = "windows"` 的程序，没有控制台、stderr 进黑洞，
+用户看到的是**双击之后什么都没发生**，最难自查的一类故障。
 
 所以 `lib.rs` 在 Tauri 起来**之前**先探一次 `webview_version()`，
-失败就用 `MessageBoxW` 弹原生对话框说明原因。这是免安装版唯一的真实坑，
-必须堵上。
+失败就用 `MessageBoxW` 弹原生对话框说明原因。
+**去掉安装包之后，这个检查从"保险"变成了唯一防线。**
 
 ### 🔴 发版时 Pages 部署踩过的坑
 

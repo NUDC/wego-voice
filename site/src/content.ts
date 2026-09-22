@@ -151,9 +151,6 @@ export interface Release {
   file: string;
   /** 人类可读的大小，如 "8.4 MB"。 */
   size: string;
-  /** 安装版（NSIS）直链。 */
-  setupUrl: string;
-  setupSize: string;
 }
 
 function humanSize(bytes: string | undefined): string {
@@ -174,8 +171,6 @@ export const RELEASE: Release = {
   url: import.meta.env.VITE_RELEASE_URL ?? "",
   file: import.meta.env.VITE_RELEASE_FILE ?? "",
   size: humanSize(import.meta.env.VITE_RELEASE_SIZE),
-  setupUrl: import.meta.env.VITE_RELEASE_SETUP_URL ?? "",
-  setupSize: humanSize(import.meta.env.VITE_RELEASE_SETUP_SIZE),
 };
 
 export const FAQ: FaqItem[] = [

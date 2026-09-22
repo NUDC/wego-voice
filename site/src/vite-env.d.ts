@@ -22,9 +22,6 @@ interface ImportMetaEnv {
   readonly VITE_RELEASE_URL?: string;
   readonly VITE_RELEASE_SIZE?: string;
   readonly VITE_RELEASE_FILE?: string;
-  /** 安装版（NSIS）。免安装版走上面那组字段。 */
-  readonly VITE_RELEASE_SETUP_URL?: string;
-  readonly VITE_RELEASE_SETUP_SIZE?: string;
 }
 
 interface ImportMeta {

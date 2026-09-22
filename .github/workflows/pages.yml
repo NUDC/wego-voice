@@ -51,24 +51,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           json=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" 2>/dev/null || true)
-          tag=""; date=""; url=""; size=""; name=""; surl=""; ssize=""
+          tag=""; date=""; url=""; size=""; name=""
           if [ -n "$json" ]; then
             tag=$(printf '%s' "$json" | jq -r '.tag_name // empty')
             date=$(printf '%s' "$json" | jq -r '.published_at // empty' | cut -dT -f1)
 
-            # 免安装版 = .exe 且**不**以 -setup.exe 结尾。
-            # 官网主按钮给它 —— 工具类用户偏好拷了就跑。
+            # 只发免安装单文件，所以取第一个 .exe 即可。
+            # 仍然排掉 -setup.exe：老版本的 Release 里还留着安装包，
+            # 万一 latest 回退到那些版本，不能把安装包当免安装版发出去。
             a=$(printf '%s' "$json" | jq -c               '[.assets[]? | select(.name | endswith(".exe")) | select(.name | endswith("-setup.exe") | not)][0] // empty')
             if [ -n "$a" ]; then
               url=$(printf '%s'  "$a" | jq -r '.browser_download_url')
               size=$(printf '%s' "$a" | jq -r '.size')
               name=$(printf '%s' "$a" | jq -r '.name')
-            fi
-
-            b=$(printf '%s' "$json" | jq -c '[.assets[]? | select(.name | endswith("-setup.exe"))][0] // empty')
-            if [ -n "$b" ]; then
-              surl=$(printf '%s'  "$b" | jq -r '.browser_download_url')
-              ssize=$(printf '%s' "$b" | jq -r '.size')
             fi
           fi
           {
@@ -77,8 +72,6 @@ jobs:
             echo "VITE_RELEASE_URL=$url"
             echo "VITE_RELEASE_SIZE=$size"
             echo "VITE_RELEASE_FILE=$name"
-            echo "VITE_RELEASE_SETUP_URL=$surl"
-            echo "VITE_RELEASE_SETUP_SIZE=$ssize"
           } >> "$GITHUB_ENV"
           echo "最新 Release：${tag:-（还没有）}"
 
