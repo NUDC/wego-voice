@@ -1,5 +1,7 @@
 import {
   FACTS,
+  RELEASE,
+  REPO,
   FAQ,
   FEATURES,
   LATENCY_BUDGET,
@@ -159,16 +161,53 @@ export function Faq() {
 }
 
 export function Download() {
+  // 没有安装包时**不要**给一个点了会 404 的按钮。
+  // 版本信息是构建期注入的，为空是正常状态（见 content.ts 的 RELEASE）。
+  if (!RELEASE.url) {
+    return (
+      <section id="download" className="wrap download">
+        <h2>下载</h2>
+        <div className="soon">
+          <p className="big">尚未发布</p>
+          <p>
+            实时修音已完成，声线模拟的离线转换还在做。
+            没有可下载的版本，也没有预约、抢先体验或等待列表。
+          </p>
+          <p className="note">
+            发布之后这一段会自动换成下载按钮 ——
+            构建流水线会从 GitHub Release 取版本号写进页面。
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section id="download" className="wrap download">
       <h2>下载</h2>
-      <div className="soon">
-        <p className="big">尚未发布</p>
-        <p>
-          实时修音已完成，换声功能开发中。
-          没有可下载的版本，也没有预约、抢先体验或等待列表。
+      <div className="release">
+        <div className="release-head">
+          <span className="release-tag mono">{RELEASE.tag}</span>
+          <span className="release-meta">
+            {FACTS.platform}
+            {RELEASE.size && ` · ${RELEASE.size}`}
+            {RELEASE.date && ` · ${RELEASE.date}`}
+          </span>
+        </div>
+
+        <a className="btn primary big" href={RELEASE.url}>
+          下载安装包
+        </a>
+
+        {/* 没有代码签名，SmartScreen 必弹。事先说清楚，
+            比让用户以为下到了病毒强。 */}
+        <p className="note">
+          安装包<strong>未做代码签名</strong>，Windows 会弹「已保护你的电脑」——
+          点「更多信息 → 仍要运行」。Release 页附有 SHA256 可自行核对。
         </p>
-        <p className="note">这个页面会在有实际可用版本时更新。</p>
+        <p className="note">
+          <a href={`${REPO}/releases`}>所有版本与更新说明</a>
+        </p>
       </div>
     </section>
   );

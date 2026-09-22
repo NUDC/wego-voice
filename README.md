@@ -222,6 +222,57 @@ npm run preview # 本地验收构建产物
 
 ---
 
+## CI 与发版
+
+三条流水线，`.github/workflows/`：
+
+| 流水线 | 触发 | 干什么 |
+|---|---|---|
+| `build.yml` | 推 `app/**` | Windows 上跑 tsc + 测试 + clippy + 打安装包，产物存 artifact |
+| `release.yml` | 推 `v*` tag | 同上，然后建 GitHub Release 并附安装包，再触发官网重新部署 |
+| `pages.yml` | 推 `site/**`、或被 release 调用 | 构建官网并发到 Pages |
+
+### 发一个版本
+
+```bash
+# 1. 先改版本号（两处必须一致，CI 会校验）
+#    app/src-tauri/tauri.conf.json  →  "version"
+#    app/package.json               →  "version"
+
+# 2. 打 tag 推上去
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+剩下的全自动：构建 → 建 Release → 官网刷新版本号与下载链接。
+
+**tag 与 `tauri.conf.json` 的版本号不一致时 CI 直接失败。** 不校验的话会出现
+「Release 叫 v0.2.0，装完打开显示 0.1.0」——用户报 bug 时说的版本号是错的，
+排查直接跑偏。
+
+### 安装包不在 GitHub Pages 上
+
+Pages 是静态站，单文件 100 MB 上限，而且把二进制塞进仓库会永久留在历史里。
+所以安装包发到 **GitHub Releases**，官网只是链过去。
+
+官网上的版本号是**构建期**从 Release API 取出来烤进 HTML 的 ——
+因为官网刻意做成零 JavaScript，为了显示一个版本号把 React 运行时和一次
+网络请求加回去不划算，而发版时重新部署一次就够了。
+
+没有任何 Release 时所有字段为空，页面显示「尚未发布」而不是一个点了会 404
+的按钮。这条两种状态我都构建验证过。
+
+> ⚠️ **安装包没有代码签名**，SmartScreen 会拦。Release 里附了 SHA256
+> 供自行核对。代码签名证书还没买，这一条会一直存在。
+
+### clippy 不阻断 CI
+
+`build.yml` 里的 clippy 刻意**不加** `-D warnings`。现有代码里有若干
+`needless_range_loop` 之类的建议，按它改反而会让 DSP 循环更难读。
+这一步的作用是让新增问题在日志里看得见，而不是把 CI 变成逼人改风格的闸门。
+
+---
+
 ## 应用内部结构
 
 ```

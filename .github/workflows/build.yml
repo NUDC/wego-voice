@@ -1,0 +1,72 @@
+name: 构建应用（Windows）
+
+# 只在 app/ 变动时跑。
+#
+# 一次冷构建要把 tauri、cpal、wasapi、windows-rs 全编一遍，十几分钟起步；
+# 改官网文案或文档没有理由触发它。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "app/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    # 产品只做 Windows（定调表 #2），而且 WASAPI 独占是 Windows 特有的 ——
+    # 在别的 runner 上连编都编不过
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 缓存 target/ 与 registry。不缓存的话每次都是十几分钟的冷构建。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app -> target
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - run: npm ci
+
+      - name: 类型检查
+        run: npx tsc --noEmit
+
+      # release 而不是 debug：DSP 测试要分析好几秒音频，
+      # debug 下 FFT 慢一两个数量级，跑完要好几分钟
+      - name: 测试
+        run: cargo test --release --workspace
+
+      # ⚠️ 刻意**不加** `-D warnings`。
+      #
+      # 现有代码里有若干 clippy 建议（`needless_range_loop` 之类），
+      # 按它改反而会让 DSP 循环更难读。这一步的作用是让新增的问题在日志里
+      # 看得见，而不是把 CI 变成一个逼人改风格的闸门。
+      - name: Clippy（仅报告，不阻断）
+        run: cargo clippy --release --workspace --all-targets
+        continue-on-error: true
+
+      # ⚠️ 必须走 tauri CLI。直接 cargo build 出来的包**前端是死的**：
+      # 开窗即空白、零 IPC。见 README 与 Phase0 踩坑表第 11 条。
+      - name: 构建安装包
+        run: npm run tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wego-voice-setup
+          path: app/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14

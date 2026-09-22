@@ -126,6 +126,39 @@ export const POSITIONING = {
   ],
 };
 
+/** 仓库地址。下载与「所有版本」都从这里派生，不写死多份。 */
+export const REPO = "https://github.com/NUDC/wego-voice";
+
+export interface Release {
+  tag: string;
+  date: string;
+  /** 安装包直链。空串表示还没有可下载的版本。 */
+  url: string;
+  file: string;
+  /** 人类可读的大小，如 "8.4 MB"。 */
+  size: string;
+}
+
+function humanSize(bytes: string | undefined): string {
+  const n = Number(bytes);
+  if (!n || !Number.isFinite(n)) return "";
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * 当前发布版本。构建期由 CI 注入（见 .github/workflows/pages.yml）。
+ *
+ * ⚠️ **`url` 为空是正常状态**，不是故障 —— 项目还没发版。
+ * 页面必须如实显示「尚未发布」，而不是给一个点了会 404 的按钮。
+ */
+export const RELEASE: Release = {
+  tag: import.meta.env.VITE_RELEASE_TAG ?? "",
+  date: import.meta.env.VITE_RELEASE_DATE ?? "",
+  url: import.meta.env.VITE_RELEASE_URL ?? "",
+  file: import.meta.env.VITE_RELEASE_FILE ?? "",
+  size: humanSize(import.meta.env.VITE_RELEASE_SIZE),
+};
+
 export const FAQ: FaqItem[] = [
   {
     q: "我的声音会被上传吗？",
@@ -153,7 +186,9 @@ export const FAQ: FaqItem[] = [
   },
   {
     q: "现在能用了吗？",
-    a: "还不能。实时修音部分已经完成并通过实测，换声部分还在开发。目前没有可下载的版本。",
+    a: RELEASE.url
+      ? `实时修音可以用了（${RELEASE.tag}），声线模拟的离线转换还在做。下载在页面底部。`
+      : "还不能。实时修音部分已经完成并通过实测，声线模拟的离线转换还在做。目前没有可下载的版本。",
   },
 ];
 

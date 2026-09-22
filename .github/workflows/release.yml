@@ -1,0 +1,111 @@
+name: 发布版本
+
+# 打 tag 即发布：
+#   git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # 建 Release 要写权限
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # tag 与 tauri.conf.json 里的版本号必须一致。
+      #
+      # 不校验的话会出现「Release 叫 v0.2.0，装完打开显示 0.1.0」——
+      # 用户报 bug 时说的版本号是错的，排查直接跑偏。
+      - name: 校验 tag 与版本号一致
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "tag=$tag  tauri.conf.json=$conf"
+          if [ "$tag" != "$conf" ]; then
+            echo "::error::tag ($tag) 与 tauri.conf.json ($conf) 不一致。先改版本号再打 tag。"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app -> target
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - run: npm ci
+
+      # 发版前跑一遍。构建能过不代表行为对，而版本一旦发出去就收不回来了。
+      - name: 测试
+        run: |
+          npx tsc --noEmit
+          cargo test --release --workspace
+
+      - name: 构建安装包
+        run: npm run tauri build
+
+      # SHA256 让用户能自己核对下载到的文件。
+      # 安装包**没有代码签名**，SmartScreen 会拦 —— 校验和是目前唯一的自证手段。
+      - name: 计算校验和
+        id: pkg
+        shell: bash
+        run: |
+          exe=$(ls target/release/bundle/nsis/*-setup.exe | head -1)
+          sha=$(sha256sum "$exe" | cut -d' ' -f1)
+          echo "path=$exe" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$exe")" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: 建 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTE'
+          ## 安装
+
+          下载下面的 `.exe` 双击安装。**仅 Windows 10 / 11。**
+
+          > ⚠️ **安装包未做代码签名**，Windows SmartScreen 会弹「已保护你的电脑」。
+          > 点「更多信息 → 仍要运行」即可。代码签名证书还没买，这一条会一直存在。
+          > 不放心的话用下面的 SHA256 自行核对。
+
+          ## 用之前请确认
+
+          - **戴有线耳机。** 外放会让麦克风拾到自己的输出，形成啸叫回路。
+          - **蓝牙耳机做不了实时耳返** —— 编解码本身就有 100~250 ms 延迟，
+            是无线协议的物理限制，任何软件都绕不过。
+          - 低延迟模式会**独占声卡**，运行期间系统其他声音会静音。
+
+          ## 校验和
+          NOTE
+          printf '\n```\nSHA256  %s\n  %s\n```\n' \
+            "${{ steps.pkg.outputs.sha }}" "${{ steps.pkg.outputs.name }}" >> notes.md
+
+          gh release create "$GITHUB_REF_NAME" \
+            "${{ steps.pkg.outputs.path }}" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md
+
+  # Release 发出去之后重新部署官网，把版本号与下载链接刷新上去。
+  # 官网是零 JS 的静态页，版本信息是**构建期**烤进 HTML 的。
+  site:
+    needs: release
+    uses: ./.github/workflows/pages.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

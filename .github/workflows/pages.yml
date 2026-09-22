@@ -4,6 +4,9 @@ name: 官网部署到 GitHub Pages
 #
 # 这个仓库里 app/ 是 Rust + Tauri 桌面应用，跟官网完全无关 ——
 # 改一行 DSP 就重跑一次前端构建纯属浪费额度。
+#
+# `workflow_call` 是给发版流程用的：Release 发出去之后要重新部署，
+# 把新的版本号和下载链接烤进 HTML（官网是零 JS 的静态页）。
 on:
   push:
     branches: [main]
@@ -11,6 +14,7 @@ on:
       - "site/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -31,6 +35,39 @@ jobs:
         working-directory: site
     steps:
       - uses: actions/checkout@v4
+
+      # 取最新 Release 的版本号与安装包信息。
+      #
+      # 为什么在**构建期**取而不是页面上用 JS 拉：官网刻意做成零 JavaScript
+      # （见 site/src/entry-server.tsx）。为了显示一个版本号就把 React 运行时
+      # 和一次网络请求加回去，不划算 —— 而发版时重新部署一次就够了。
+      #
+      # 还没有任何 Release 时全部留空，页面会显示「尚未发布」。
+      - name: 取最新 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          json=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" 2>/dev/null || true)
+          tag=""; date=""; url=""; size=""; name=""
+          if [ -n "$json" ]; then
+            tag=$(printf '%s' "$json" | jq -r '.tag_name // empty')
+            date=$(printf '%s' "$json" | jq -r '.published_at // empty' | cut -dT -f1)
+            asset=$(printf '%s' "$json" | jq -c '[.assets[]? | select(.name | endswith(".exe"))][0] // empty')
+            if [ -n "$asset" ]; then
+              url=$(printf '%s'  "$asset" | jq -r '.browser_download_url')
+              size=$(printf '%s' "$asset" | jq -r '.size')
+              name=$(printf '%s' "$asset" | jq -r '.name')
+            fi
+          fi
+          {
+            echo "VITE_RELEASE_TAG=$tag"
+            echo "VITE_RELEASE_DATE=$date"
+            echo "VITE_RELEASE_URL=$url"
+            echo "VITE_RELEASE_SIZE=$size"
+            echo "VITE_RELEASE_FILE=$name"
+          } >> "$GITHUB_ENV"
+          echo "最新 Release：${tag:-（还没有）}"
 
       - uses: actions/setup-node@v4
         with:

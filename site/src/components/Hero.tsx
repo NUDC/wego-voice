@@ -1,4 +1,4 @@
-import { FACTS, NAV } from "../content";
+import { FACTS, NAV, RELEASE } from "../content";
 
 export function Nav() {
   return (
@@ -52,7 +52,7 @@ export function Hero() {
 
       <div className="hero-actions">
         <a className="btn primary" href="#download">
-          下载（开发中）
+          {RELEASE.url ? `下载 ${RELEASE.tag}` : "下载（开发中）"}
         </a>
         <a className="btn" href="#how">
           先看技术细节
