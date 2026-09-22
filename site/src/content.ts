@@ -25,8 +25,10 @@ export interface Feature {
 export interface LatencyRow {
   label: string;
   frames: string;
-  ms: string;
-  total?: boolean;
+  /** 毫秒，**数值**。要画成堆叠条，光有字符串不够。 */
+  ms: number;
+  /** 条形的颜色档。设备 I/O 与 DSP 是两类东西，视觉上要分开。 */
+  kind: "io" | "dsp";
 }
 
 export interface FaqItem {
@@ -91,12 +93,14 @@ export const LATENCY_SCALE = [
 
 /** 生产配置的延迟拆解。48kHz，WASAPI 独占。 */
 export const LATENCY_BUDGET: LatencyRow[] = [
-  { label: "输入块", frames: "96 帧", ms: "2.00 ms" },
-  { label: "环形缓冲", frames: "456 帧", ms: "9.50 ms" },
-  { label: "输出块", frames: "144 帧", ms: "3.00 ms" },
-  { label: "音高修正算法", frames: "—", ms: "15.42 ms" },
-  { label: "端到端", frames: "", ms: `${FACTS.latencyMs} ms`, total: true },
+  { label: "输入块", frames: "96 帧", ms: 2.0, kind: "io" },
+  { label: "环形缓冲", frames: "456 帧", ms: 9.5, kind: "io" },
+  { label: "输出块", frames: "144 帧", ms: 3.0, kind: "io" },
+  { label: "音高修正算法", frames: "PSOLA", ms: 15.42, kind: "dsp" },
 ];
+
+/** 画堆叠条时的横轴满量程。取 No-Go 线，好让"贴着线"这件事看得见。 */
+export const BUDGET_SCALE_MS = FACTS.budgetMs;
 
 export const REQUIREMENTS = {
   yes: [

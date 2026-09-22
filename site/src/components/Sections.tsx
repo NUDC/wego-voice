@@ -1,12 +1,12 @@
 import {
+  BUDGET_SCALE_MS,
   FACTS,
-  RELEASE,
-  REPO,
   FAQ,
   FEATURES,
   LATENCY_BUDGET,
-  LATENCY_SCALE,
   POSITIONING,
+  RELEASE,
+  REPO,
   REQUIREMENTS,
 } from "../content";
 import { RichText, Section, StatusBadge, TickList } from "./Bits";
@@ -35,21 +35,14 @@ export function HowItWorks() {
 
       <p className="para">
         人唱歌时，自己的声音通过两条路进大脑：骨传导（零延迟）和耳返（有延迟）。
-        两条路叠加会出问题 ——
+        两条路一旦拉开距离，人会不自觉地结巴、跑调 ——
+        这是<strong>延迟听觉反馈效应</strong>，超过 {FACTS.dafThresholdMs}{" "}
+        毫秒之后，开着比关着更糟。
       </p>
 
-      <div className="scale">
-        {LATENCY_SCALE.map((s) => (
-          <div key={s.range} className={`seg ${s.tone}`}>
-            <b>{s.range}</b>
-            <span>{s.desc}</span>
-          </div>
-        ))}
-      </div>
-
       <p className="para">
-        超过 {FACTS.dafThresholdMs} 毫秒，开着比关着更糟。所以目标很明确：
-        <strong>必须压进 {FACTS.budgetMs} 毫秒。</strong>
+        所以目标很明确：<strong>必须压进 {FACTS.budgetMs} 毫秒。</strong>
+        这不是性能指标，是这个产品成不成立的前提。
       </p>
 
       <h3>难点不在算法，在音频后端</h3>
@@ -66,18 +59,42 @@ export function HowItWorks() {
         这对录音工具是可以接受的 —— 录音时本来就该独占。
       </p>
 
-      <table className="budget">
-        <caption>实测延迟构成（48kHz）</caption>
-        <tbody>
+      {/* 五行数字远不如一根条 —— 要让人看见的是"它贴着 30ms 那条线"，
+          而不是让人自己把 2.00 + 9.50 + 3.00 + 15.42 加起来。 */}
+      <figure className="budget">
+        <div className="budget-bar" aria-hidden>
           {LATENCY_BUDGET.map((r) => (
-            <tr key={r.label} className={r.total ? "total" : undefined}>
-              <td>{r.label}</td>
-              <td className="n">{r.frames}</td>
-              <td className="n">{r.ms}</td>
-            </tr>
+            <span
+              key={r.label}
+              className={`seg-${r.kind}`}
+              style={{ width: `${(r.ms / BUDGET_SCALE_MS) * 100}%` }}
+            />
           ))}
-        </tbody>
-      </table>
+          <span className="budget-line" />
+        </div>
+
+        <ol className="budget-legend">
+          {LATENCY_BUDGET.map((r) => (
+            <li key={r.label}>
+              <i className={`seg-${r.kind}`} />
+              <span className="bl-name">{r.label}</span>
+              <span className="bl-frames mono">{r.frames}</span>
+              <span className="bl-ms mono">{r.ms.toFixed(2)} ms</span>
+            </li>
+          ))}
+          <li className="bl-total">
+            <i />
+            <span className="bl-name">端到端</span>
+            <span className="bl-frames mono">48 kHz · WASAPI 独占</span>
+            <span className="bl-ms mono">{FACTS.latencyMs} ms</span>
+          </li>
+        </ol>
+
+        <figcaption>
+          横轴满量程就是 {FACTS.budgetMs} ms 那条线。
+          <strong>余量只剩 0.08 ms</strong> —— 任何一环再多要一点都进不来。
+        </figcaption>
+      </figure>
 
       <p className="note">
         这是同一台机器上实测出来的数字，不是理论估算。
@@ -216,9 +233,12 @@ export function Download() {
 export function Footer() {
   return (
     <footer>
-      <div className="wrap foot">
+      <div className="foot">
         <span>wego-voice</span>
         <span className="dim">Windows 桌面工具 · 单机运行</span>
+        <span className="spacer" />
+        <a href={REPO}>源码</a>
+        <a href={`${REPO}/releases`}>版本</a>
       </div>
     </footer>
   );
