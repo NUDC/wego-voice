@@ -82,6 +82,10 @@ export interface MetricsSnapshot {
   targetMidi: number;
   voiced: boolean;
   clipping: boolean;
+  /** 房间噪声本底估计（线性 RMS）。 */
+  noiseFloor: number;
+  /** 本帧是否越过噪声门。false 说明 YIN 根本没跑。 */
+  gateOpen: boolean;
 }
 
 export interface Tick {
@@ -133,6 +137,8 @@ export interface ParamUpdate {
   monitorGain?: number;
   pitchShift?: number;
   formantShift?: number;
+  /** 噪声门余量（dB）。人声要高出实测本底这么多才进入音高检测。 */
+  noiseGateDb?: number;
 }
 
 /**

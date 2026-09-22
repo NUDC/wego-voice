@@ -166,6 +166,11 @@ struct AudioOpts {
     #[arg(long, global = true)]
     pitch_shift: Option<f32>,
 
+    /// 噪声门余量（dB）。人声要高出实测本底这么多才进入音高检测。
+    /// 0 = 关掉门。默认 12。
+    #[arg(long, global = true)]
+    noise_gate_db: Option<f32>,
+
     /// 角色：共振峰平移（半音）。
     ///
     /// ⚠️ 非 0 会让 PSOLA 走**逐样本插值**路径 —— 这是声线功能真正的
@@ -214,6 +219,7 @@ struct Args {
     retune_ms: Option<f32>,
     pitch_shift: Option<f32>,
     formant_shift: Option<f32>,
+    noise_gate_db: Option<f32>,
     muted: bool,
     f0_floor: f32,
     backend: BackendKind,
@@ -234,6 +240,7 @@ impl Args {
             retune_ms: audio.retune,
             pitch_shift: audio.pitch_shift,
             formant_shift: audio.formant_shift,
+            noise_gate_db: audio.noise_gate_db,
             muted: audio.mute,
             f0_floor: audio.f0_floor,
             backend: audio.backend,
@@ -418,6 +425,9 @@ fn apply_params(engine: &AudioEngine, args: &Args) {
     }
     if let Some(v) = args.formant_shift {
         engine.params.set_formant_shift(v);
+    }
+    if let Some(v) = args.noise_gate_db {
+        engine.params.set_noise_gate_db(v);
     }
     engine
         .params
@@ -657,6 +667,34 @@ fn print_report(engine: &AudioEngine, args: &Args) {
             "两侧间隔都正常 —— xrun 另有原因，查环形缓冲水位与漂移补偿"
         };
         println!("  ↑ xrun 归因：{blame}");
+    }
+
+    // 输入噪声本底。
+    //
+    // 放进常规报告是有目的的：WASAPI 独占模式会绕过 Windows 的音频引擎，
+    // 系统与厂商的 APO 降噪（例如「英特尔智音技术」）在独占下**不生效**。
+    // 也就是说我们为了压延迟，可能顺手关掉了用户本来有的降噪。
+    //
+    // 这个数字让那件事可测：同一台机器上跑
+    //     wego-bench soak --backend wasapi --mute
+    //     wego-bench soak --backend cpal   --mute
+    // 两轮的本底一比就知道差多少 dB。
+    println!("\n【输入噪声】");
+    let floor = m.noise_floor;
+    println!(
+        "  本底估计      {:.5}（{:.1} dBFS）",
+        floor,
+        voice_core::to_dbfs(floor)
+    );
+    println!(
+        "  噪声门余量    {:.0} dB → 门限 {:.1} dBFS",
+        args.noise_gate_db.unwrap_or(12.0),
+        voice_core::to_dbfs(floor) + args.noise_gate_db.unwrap_or(12.0)
+    );
+    if floor > 0.02 {
+        println!("  ⚠️ 本底过高，噪声门已自动停用（估出来的不像是噪声）");
+    } else if floor > 0.005 {
+        println!("  ⚠️ 环境偏吵，弱起音可能被门挡掉；考虑换设备或降低余量");
     }
 
     println!("\n【时钟漂移】");

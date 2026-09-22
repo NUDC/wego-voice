@@ -43,6 +43,8 @@ export default function App() {
   const [outputDevice, setOutputDevice] = useState("");
   const [f0Floor, setF0Floor] = useState(130);
   const [targetFill, setTargetFill] = useState(2.5);
+  // 噪声门余量。运行中可改 —— 不需要重建音频链路。
+  const [noiseGateDb, setNoiseGateDb] = useState(12);
   const [muted, setMuted] = useState(true);
 
   // 角色库。「调」「修正速度」「移调」「共振峰」都住在角色里 ——
@@ -161,7 +163,7 @@ export default function App() {
         targetFillBlocks: targetFill,
       });
       setInfo(i);
-      await api.setParams({ monitorMuted: muted });
+      await api.setParams({ monitorMuted: muted, noiseGateDb });
       if (active) await api.applyCharacter(active);
     } catch (e) {
       setError(String(e));
@@ -169,7 +171,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [backend, inputDevice, outputDevice, f0Floor, targetFill, muted, active]);
+  }, [backend, inputDevice, outputDevice, f0Floor, targetFill, muted, noiseGateDb, active]);
 
   const stop = useCallback(async () => {
     await api.stop();
@@ -178,6 +180,11 @@ export default function App() {
   }, []);
 
   // 运行中改的参数要立刻下发，否则滑杆动了声音没变，用户会以为坏了
+  const pushNoiseGate = useCallback((v: number) => {
+    setNoiseGateDb(v);
+    if (running) api.setParams({ noiseGateDb: v }).catch(() => {});
+  }, [running]);
+
   const pushMuted = useCallback((v: boolean) => {
     setMuted(v);
     if (running) api.setParams({ monitorMuted: v }).catch(() => {});
@@ -346,6 +353,8 @@ export default function App() {
             onF0Floor={setF0Floor}
             targetFill={targetFill}
             onTargetFill={setTargetFill}
+            noiseGateDb={noiseGateDb}
+            onNoiseGateDb={pushNoiseGate}
             viewport={viewport}
           />
         )}

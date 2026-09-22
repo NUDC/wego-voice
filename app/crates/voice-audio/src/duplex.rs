@@ -382,6 +382,8 @@ impl RenderHalf {
         self.corrector.set_pitch_shift(self.params.pitch_shift());
         self.corrector
             .set_formant_shift(self.params.formant_shift());
+        self.corrector
+            .set_noise_gate_db(self.params.noise_gate_db());
         self.corrector.set_bypass(self.params.bypass.load(REL));
 
         // --- DSP ---

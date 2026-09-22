@@ -27,10 +27,12 @@
 //! ```
 
 pub mod fft;
+pub mod noise;
 pub mod psola;
 pub mod scale;
 pub mod yin;
 
+pub use noise::{to_dbfs, NoiseGate, NoiseGateConfig};
 pub use psola::{Psola, PsolaConfig};
 pub use scale::{
     cents_between, hz_to_midi, midi_to_hz, Key, RetuneConfig, RetuneFrame, Retuner, ScaleKind,
@@ -49,6 +51,7 @@ pub struct CorrectorConfig {
     pub yin: YinConfig,
     pub retune: RetuneConfig,
     pub psola: PsolaConfig,
+    pub noise: NoiseGateConfig,
     pub key: Key,
 }
 
@@ -60,6 +63,7 @@ impl Default for CorrectorConfig {
             yin: YinConfig::default(),
             retune: RetuneConfig::default(),
             psola: PsolaConfig::default(),
+            noise: NoiseGateConfig::default(),
             key: Key::default(),
         }
     }
@@ -77,6 +81,7 @@ impl CorrectorConfig {
             yin: YinConfig { sample_rate, ..d.yin },
             retune: RetuneConfig { sample_rate, ..d.retune },
             psola: PsolaConfig { sample_rate, ..d.psola },
+            noise: NoiseGateConfig { sample_rate, ..d.noise },
             ..d
         }
     }
@@ -100,6 +105,10 @@ pub struct AnalysisFrame {
     pub ratio: f32,
     /// 是否因跑调过大而只做了部分修正。
     pub clamped: bool,
+    /// 当前房间噪声本底估计（线性 RMS）。诊断页显示它。
+    pub noise_floor: f32,
+    /// 本帧是否越过了噪声门。为 false 时 YIN 根本没跑。
+    pub gate_open: bool,
 }
 
 pub struct Corrector {
@@ -107,6 +116,7 @@ pub struct Corrector {
     yin: Yin,
     retuner: Retuner,
     psola: Psola,
+    gate: NoiseGate,
 
     /// YIN 的线性分析缓冲，长度恰为 `yin.required_len()`。
     /// 用 `copy_within` 左移，不重新分配。
@@ -131,6 +141,7 @@ impl Corrector {
             yin,
             retuner: Retuner::new(cfg.retune, cfg.key),
             psola: Psola::new(cfg.psola),
+            gate: NoiseGate::new(cfg.noise),
             analysis,
             since_analysis: 0,
             frame: AnalysisFrame::default(),
@@ -199,6 +210,25 @@ impl Corrector {
     /// 负值 = 下移 = 声道变长 = 更粗/更大（大叔）。
     pub fn set_formant_shift(&mut self, semitones: f32) {
         self.formant_shift = semitones.clamp(-12.0, 12.0);
+    }
+
+    /// 噪声门余量（dB）。人声要高出实测本底这么多才放行。
+    ///
+    /// 调高：更不容易被风扇/电流声误触发，但会吃掉弱起音和收尾气声。
+    /// 调低：反之。0 相当于关掉门（只剩绝对静音保护）。
+    pub fn set_noise_gate_db(&mut self, db: f32) {
+        self.gate.set_margin_db(db);
+    }
+
+    /// 当前噪声本底估计（线性 RMS）。
+    #[inline]
+    pub fn noise_floor(&self) -> f32 {
+        self.gate.floor()
+    }
+
+    /// 换设备后重新学一遍本底。
+    pub fn reset_noise_gate(&mut self) {
+        self.gate.reset();
     }
 
     #[inline]
@@ -273,26 +303,37 @@ impl Corrector {
         }
         let rms = (energy / self.analysis.len() as f32).sqrt();
 
+        // --- 噪声门 ---
+        //
+        // 门关着就**根本不跑 YIN**。两个收益：
+        //   1. 正确性：风扇、变压器电流声都有周期成分，YIN 会给出一个
+        //      很自信的基频，然后 PSOLA 开始对着风扇修音
+        //   2. CPU：静音段占实际使用时长的一大半，YIN 是这里最贵的一项
+        let gate_open = self.gate.is_open(rms);
+        if !gate_open {
+            // 门关着 = 确定不是人声 → 可以拿它更新本底估计
+            self.gate.update(rms, self.cfg.hop);
+            self.unvoiced_frame(rms, peak, 1.0);
+            return;
+        }
+
         // --- 音高检测 ---
         let est = self.yin.analyze(&self.analysis);
 
         if !est.is_voiced {
-            // 清音/静音：复位 retune 状态，避免下一次起音被上一句污染
-            self.retuner.reset();
-            self.psola.set_pitch(0.0, false);
-            self.psola.set_ratio(1.0);
-            self.psola.set_formant(1.0);
-            self.frame = AnalysisFrame {
-                f0_hz: 0.0,
-                is_voiced: false,
-                aperiodicity: est.aperiodicity,
-                rms,
-                clipping: peak >= 0.999,
-                ratio: 1.0,
-                ..Default::default()
-            };
+            // VAD 说不是人声 → 允许更新本底。
+            //
+            // 清辅音（s / f / sh）会走到这里：它们响且非周期。
+            // 靠 NoiseGate 的非对称时间常数（升得慢）把它们滤掉，
+            // 而不是在这里特判 —— 特判清辅音要先能识别清辅音，是循环依赖。
+            self.gate.update(rms, self.cfg.hop);
+            self.unvoiced_frame(rms, peak, est.aperiodicity);
             return;
         }
+
+        // 到这里说明本帧是人声 —— **本底冻结，一个字都不更新**。
+        // 不冻结的话，一个 5 秒长音会把本底一路抬到人声电平，
+        // 门随即关死，表现就是"唱着唱着修音没了"。
 
         // --- 调式量化 + retune 策略 ---
         let rt = self.retuner.process(est.f0_hz, self.cfg.hop);
@@ -323,6 +364,30 @@ impl Corrector {
             cents_off: rt.cents_off,
             ratio,
             clamped: rt.clamped,
+            noise_floor: self.gate.floor(),
+            gate_open: true,
+        };
+    }
+
+    /// 非人声帧的收尾：复位状态、写快照。
+    ///
+    /// 抽出来是因为它有两个入口（门关着 / YIN 判清音），
+    /// 而「复位 retune 状态」这一步漏掉任何一个都会让下一次起音被上一句污染。
+    fn unvoiced_frame(&mut self, rms: f32, peak: f32, aperiodicity: f32) {
+        self.retuner.reset();
+        self.psola.set_pitch(0.0, false);
+        self.psola.set_ratio(1.0);
+        self.psola.set_formant(1.0);
+        self.frame = AnalysisFrame {
+            f0_hz: 0.0,
+            is_voiced: false,
+            aperiodicity,
+            rms,
+            clipping: peak >= 0.999,
+            ratio: 1.0,
+            noise_floor: self.gate.floor(),
+            gate_open: false,
+            ..Default::default()
         };
     }
 }

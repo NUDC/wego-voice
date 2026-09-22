@@ -25,6 +25,8 @@ pub struct Params {
     pitch_shift: AtomicU32,
     /// 角色：共振峰平移（半音）。f32 位模式。
     formant_shift: AtomicU32,
+    /// 噪声门余量（dB）。人声要高出实测本底这么多才进入音高检测。
+    noise_gate_db: AtomicU32,
 }
 
 impl Default for Params {
@@ -38,6 +40,7 @@ impl Default for Params {
             monitor_gain: AtomicU32::new(1.0f32.to_bits()),
             pitch_shift: AtomicU32::new(0.0f32.to_bits()),
             formant_shift: AtomicU32::new(0.0f32.to_bits()),
+            noise_gate_db: AtomicU32::new(12.0f32.to_bits()),
         }
     }
 }
@@ -73,6 +76,14 @@ impl Params {
 
     pub fn set_formant_shift(&self, v: f32) {
         self.formant_shift.store(v.clamp(-12.0, 12.0).to_bits(), REL);
+    }
+
+    pub fn noise_gate_db(&self) -> f32 {
+        f32::from_bits(self.noise_gate_db.load(REL))
+    }
+
+    pub fn set_noise_gate_db(&self, v: f32) {
+        self.noise_gate_db.store(v.clamp(0.0, 40.0).to_bits(), REL);
     }
 
     pub fn key(&self) -> Key {

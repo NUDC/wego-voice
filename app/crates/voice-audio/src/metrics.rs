@@ -122,6 +122,10 @@ pub struct Metrics {
     pub target_midi: AtomicI32,
     pub voiced: AtomicBool,
     pub clipping: AtomicBool,
+    /// 房间噪声本底估计（线性 RMS）。诊断页用它判断设备/环境够不够安静。
+    pub noise_floor: AtomicU32,
+    /// 本帧是否越过噪声门。为 false 说明 YIN 根本没跑。
+    pub gate_open: AtomicBool,
 }
 
 impl Metrics {
@@ -166,6 +170,8 @@ impl Metrics {
         self.target_midi.store(f.target_midi, REL);
         self.voiced.store(f.is_voiced, REL);
         self.clipping.store(f.clipping, REL);
+        store_f32(&self.noise_floor, f.noise_floor);
+        self.gate_open.store(f.gate_open, REL);
     }
 
     /// 快照。控制线程/UI 调用，音频线程不调用。
@@ -214,6 +220,8 @@ impl Metrics {
             target_midi: self.target_midi.load(REL),
             voiced: self.voiced.load(REL),
             clipping: self.clipping.load(REL),
+            noise_floor: load_f32(&self.noise_floor),
+            gate_open: self.gate_open.load(REL),
         }
     }
 
@@ -277,6 +285,8 @@ pub struct MetricsSnapshot {
     pub target_midi: i32,
     pub voiced: bool,
     pub clipping: bool,
+    pub noise_floor: f32,
+    pub gate_open: bool,
 }
 
 impl MetricsSnapshot {

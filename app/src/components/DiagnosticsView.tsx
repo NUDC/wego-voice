@@ -14,6 +14,26 @@ function fmt(n: number | undefined, digits = 0) {
   return n === undefined || Number.isNaN(n) ? "—" : n.toFixed(digits);
 }
 
+/** 线性幅度转 dBFS。人对噪声的直觉是 dB，不是 0.0017。 */
+function dbfs(linear: number | undefined) {
+  if (!linear || linear <= 0) return -100;
+  return 20 * Math.log10(linear);
+}
+
+/**
+ * 本底高于这个值就认为估出来的不是噪声，噪声门自动停用。
+ * 必须与 `voice-core/src/noise.rs` 的 `MAX_PLAUSIBLE_FLOOR` 保持一致。
+ */
+const MAX_PLAUSIBLE_FLOOR = 0.02;
+
+/** -50 dBFS 以下是安静房间；-40 起弱起音会开始被门吃掉。 */
+function noiseTone(floor: number): Tone {
+  if (floor <= 0) return "neutral";
+  if (floor >= MAX_PLAUSIBLE_FLOOR) return "alert";
+  if (floor > 0.005) return "caution";
+  return "good";
+}
+
 /** 30ms 是 No-Go 线；50ms 起触发延迟听觉反馈效应，产品直接失效。 */
 function latencyTone(ms: number): Tone {
   if (ms <= 0) return "neutral";
@@ -34,6 +54,8 @@ export interface DiagProps {
   onF0Floor: (v: number) => void;
   targetFill: number;
   onTargetFill: (v: number) => void;
+  noiseGateDb: number;
+  onNoiseGateDb: (v: number) => void;
   /** 视口尺寸与内容溢出量。用户报 bug 时要用。 */
   viewport: { w: number; h: number; overflow: number };
 }
@@ -169,6 +191,89 @@ export function DiagnosticsView(p: DiagProps) {
               （电源管理、虚拟机暂停、杀毒扫描等），不是本程序算不过来。
             </p>
           )}
+        </Panel>
+
+        <Panel title="输入噪声">
+          {(() => {
+            const floor = m.noiseFloor ?? 0;
+            const disabled = floor >= MAX_PLAUSIBLE_FLOOR;
+            return (
+              <>
+                <Row
+                  label="房间本底"
+                  value={running ? `${fmt(dbfs(floor), 1)} dBFS` : "—"}
+                  tone={running ? noiseTone(floor) : "neutral"}
+                />
+                <Row
+                  label="噪声门限"
+                  value={
+                    running && !disabled
+                      ? `${fmt(dbfs(floor) + p.noiseGateDb, 1)} dBFS`
+                      : running
+                        ? "已停用"
+                        : "—"
+                  }
+                  tone={disabled && running ? "caution" : "neutral"}
+                />
+                <Row
+                  label="当前状态"
+                  value={
+                    !running
+                      ? "—"
+                      : m.gateOpen
+                        ? m.voiced
+                          ? "放行 · 检测到人声"
+                          : "放行 · 未判定为人声"
+                        : "关闭 · 已跳过音高检测"
+                  }
+                  muted
+                />
+                {running && disabled && (
+                  <p className="hint">
+                    本底高过合理上限，<b>噪声门已自动停用</b> ——
+                    估出来的显然不是噪声（多半是启动时你已经在唱，
+                    或者环境实在太吵）。停一下不出声，一两秒就能重新学到。
+                    <br />
+                    这是刻意的：<b>门宁可失效，也不能把人声吞掉。</b>
+                  </p>
+                )}
+                {running && !disabled && floor > 0.005 && (
+                  <p className="hint">
+                    环境偏吵，弱起音和收尾气声可能被门挡掉。
+                    换个安静点的地方，或把下面的余量调小。
+                  </p>
+                )}
+                {running && !disabled && floor <= 0.005 && (
+                  <p className="hint">
+                    本底越低越好。门的作用是<b>不让风扇、电流声这类
+                    有周期成分的噪声被当成人声修音</b>，
+                    同时省掉静音段的音高检测开销。
+                  </p>
+                )}
+
+                {/* 这一项运行中可改 —— 和下面「引擎参数」那两个不同，
+                    它不需要重建音频链路，调完立刻听得出来。 */}
+                <Field
+                  label="门限余量"
+                  hint="人声要高出本底多少 dB 才放行。调高更不容易被噪声误触发，但会吃掉弱起音。"
+                >
+                  <div className="slider-row">
+                    <input
+                      type="range"
+                      min={0}
+                      max={30}
+                      step={1}
+                      value={p.noiseGateDb}
+                      onChange={(e) => p.onNoiseGateDb(Number(e.target.value))}
+                    />
+                    <span className="slider-val mono">
+                      {p.noiseGateDb === 0 ? "关" : `${p.noiseGateDb} dB`}
+                    </span>
+                  </div>
+                </Field>
+              </>
+            );
+          })()}
         </Panel>
 
         <Panel title="时钟与缓冲">

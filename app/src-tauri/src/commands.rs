@@ -108,6 +108,8 @@ pub struct ParamUpdate {
     pub pitch_shift: Option<f32>,
     /// 角色：共振峰平移（半音）。
     pub formant_shift: Option<f32>,
+    /// 噪声门余量（dB）。人声要高出实测本底这么多才进入音高检测。
+    pub noise_gate_db: Option<f32>,
 }
 
 #[tauri::command]
@@ -137,6 +139,9 @@ pub fn set_params(state: State<AppState>, upd: ParamUpdate) -> Result<(), String
     }
     if let Some(v) = upd.formant_shift {
         p.set_formant_shift(v);
+    }
+    if let Some(v) = upd.noise_gate_db {
+        p.set_noise_gate_db(v);
     }
     Ok(())
 }
