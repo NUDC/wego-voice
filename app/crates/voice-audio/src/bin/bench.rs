@@ -95,6 +95,22 @@ enum Cmd {
     ///
     /// 这个子命令喂合成浊音，逼着走完整的分析+合成路径，
     /// 是唯一能把"某个参数贵不贵"量准的地方。
+    /// 离线重新校准一个 WAV
+    ///
+    /// 实时链路被 30ms 预算捆着：不能回看、f0 只能因果、PSOLA 窗口被
+    /// f0_floor 截断。离线这三条限制都没有，所以质量应当明显更好。
+    ///
+    /// 产出的音高轨同时是 DDSP-SVC 那条路的必需输入。
+    Recorrect {
+        /// 输入干声 WAV
+        #[arg(long)]
+        input: String,
+
+        /// 输出 WAV
+        #[arg(long)]
+        output: String,
+    },
+
     /// 比较两段音频的声线，输出角色参数建议
     ///
     /// 这条路径的 UI 入口要靠拖拽文件，没法自动化验证；
@@ -329,7 +345,86 @@ fn main() -> Result<()> {
         Cmd::Dsp { duration, block } => dsp_cost(&cli.audio, duration, block),
 
         Cmd::Timbre { reference, source } => timbre_report(&reference, &source),
+
+        Cmd::Recorrect { input, output } => recorrect_file(&cli.audio, &input, &output),
     }
+}
+
+/// 离线重新校准：读 WAV → 提音高轨 → 重新校准 → 写 WAV。
+fn recorrect_file(audio: &AudioOpts, input: &str, output: &str) -> Result<()> {
+    use std::io::Write;
+    use voice_audio::wav;
+
+    let src = wav::read(input)?;
+    let sr = src.sample_rate as f32;
+    println!(
+        "【输入】{}  {:.1}s  {}ch @{}Hz",
+        input,
+        src.duration_secs(),
+        src.channels,
+        src.sample_rate
+    );
+
+    // 取 String 而不是 &str：闭包要 move 进去，借用活不过返回
+    let bar = |label: String| {
+        let mut last = -1i32;
+        move |p: f32| -> bool {
+            let pct = (p * 100.0) as i32 / 5 * 5;
+            if pct != last {
+                last = pct;
+                print!("\r  {label} {pct:3}%");
+                let _ = std::io::stdout().flush();
+            }
+            true
+        }
+    };
+
+    let t0 = std::time::Instant::now();
+    let track = voice_core::track_pitch(&src.samples, sr, bar("提取音高".into())).unwrap();
+    println!();
+
+    println!("【音高轨】");
+    println!(
+        "  {} 帧（步进 {} = {:.1}ms），浊音 {} 帧（{:.0}%）",
+        track.frames.len(),
+        track.hop,
+        track.hop as f32 * 1000.0 / sr,
+        track.voiced_count(),
+        track.voiced_count() as f32 / track.frames.len().max(1) as f32 * 100.0
+    );
+    println!("  中位基频    {:.1} Hz", track.median_f0());
+    println!(
+        "  八度纠错    {} 帧   ← 实时链路看不到邻域，这些修不了",
+        track.octave_fixes
+    );
+    println!("  补洞        {} 帧", track.gap_fills);
+
+    let key = audio
+        .key
+        .as_deref()
+        .and_then(parse_key)
+        .unwrap_or_default();
+    let cfg = voice_core::RecorrectConfig {
+        key,
+        retune_ms: audio.retune.unwrap_or(40.0),
+        intent_ms: 150.0,
+        pitch_shift: audio.pitch_shift.unwrap_or(0.0),
+        formant_shift: audio.formant_shift.unwrap_or(0.0),
+    };
+
+    let out = voice_core::recorrect(&src.samples, sr, &track, cfg, bar("重新校准".into())).unwrap();
+    println!();
+
+    wav::write(output, &out, src.sample_rate)?;
+    let secs = t0.elapsed().as_secs_f32();
+    println!("【输出】{output}");
+    println!(
+        "  {:.1}s 音频耗时 {:.1}s（{:.1}× 实时）",
+        src.duration_secs(),
+        secs,
+        src.duration_secs() / secs.max(1e-6)
+    );
+    Ok(())
 }
 
 /// 声线比较。读两个 WAV，输出角色参数建议。

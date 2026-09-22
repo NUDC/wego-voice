@@ -28,6 +28,7 @@
 
 pub mod fft;
 pub mod noise;
+pub mod offline;
 pub mod psola;
 pub mod scale;
 pub mod tilt;
@@ -35,6 +36,7 @@ pub mod timbre;
 pub mod yin;
 
 pub use noise::{to_dbfs, NoiseGate, NoiseGateConfig};
+pub use offline::{recorrect, track_pitch, PitchFrame, PitchTrack, RecorrectConfig};
 pub use psola::{Psola, PsolaConfig};
 pub use tilt::Tilt;
 pub use timbre::{analyze as analyze_timbre, match_to, TimbreMatch, TimbreProfile};

@@ -346,3 +346,54 @@ mod tests {
         assert!((a.duration_secs() - MAX_SECS).abs() < 0.01);
     }
 }
+
+/// 写一个 32-bit float 单声道 WAV。
+///
+/// 离线产物要落盘。和 `recorder.rs` 里那个流式写入器不同 ——
+/// 这里数据已经全在内存里，一次写完即可，不需要回填长度字段。
+pub fn write(path: impl AsRef<Path>, samples: &[f32], sample_rate: u32) -> Result<()> {
+    use std::io::Write;
+    let path = path.as_ref();
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d).ok();
+    }
+    let data_bytes = (samples.len() * 4) as u32;
+    let mut v = Vec::with_capacity(44 + data_bytes as usize);
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes());
+    v.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
+    v.extend_from_slice(&1u16.to_le_bytes()); // 单声道
+    v.extend_from_slice(&sample_rate.to_le_bytes());
+    v.extend_from_slice(&(sample_rate * 4).to_le_bytes());
+    v.extend_from_slice(&4u16.to_le_bytes());
+    v.extend_from_slice(&32u16.to_le_bytes());
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&data_bytes.to_le_bytes());
+    for s in samples {
+        v.extend_from_slice(&s.to_le_bytes());
+    }
+    std::fs::File::create(path)
+        .and_then(|mut f| f.write_all(&v))
+        .with_context(|| format!("写入失败：{}", path.display()))
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    /// 写出去再读回来必须逐位一致 —— 离线产物是后续处理的输入，
+    /// 这里有任何损耗都会一路传下去。
+    #[test]
+    fn write_read_roundtrip_is_bit_exact() {
+        let path = std::env::temp_dir().join("wego-wav-rt.wav");
+        let src: Vec<f32> = (0..1000).map(|i| (i as f32 / 500.0 - 1.0) * 0.8).collect();
+        write(&path, &src, 48_000).unwrap();
+        let back = read(&path).unwrap();
+        assert_eq!(back.sample_rate, 48_000);
+        assert_eq!(back.channels, 1);
+        assert_eq!(back.samples, src);
+        let _ = std::fs::remove_file(&path);
+    }
+}
