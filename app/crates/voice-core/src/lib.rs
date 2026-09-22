@@ -30,10 +30,12 @@ pub mod fft;
 pub mod noise;
 pub mod psola;
 pub mod scale;
+pub mod timbre;
 pub mod yin;
 
 pub use noise::{to_dbfs, NoiseGate, NoiseGateConfig};
 pub use psola::{Psola, PsolaConfig};
+pub use timbre::{analyze as analyze_timbre, match_to, TimbreMatch, TimbreProfile};
 pub use scale::{
     cents_between, hz_to_midi, midi_to_hz, Key, RetuneConfig, RetuneFrame, Retuner, ScaleKind,
     SEMITONE_NAMES,

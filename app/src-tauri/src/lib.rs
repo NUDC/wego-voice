@@ -74,6 +74,8 @@ pub fn run(autostart: bool, f0_floor: f32) {
             commands::stop_recording,
             commands::recording_status,
             commands::reveal_recordings,
+            commands::list_recordings,
+            commands::suggest_character,
             commands::characters_load,
             commands::characters_save,
             commands::characters_builtins,

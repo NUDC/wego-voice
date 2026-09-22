@@ -256,6 +256,123 @@ pub fn reveal_recordings(app: tauri::AppHandle) -> Result<String, String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
+// ────────────────────── 参考音频 → 角色 ──────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TakeInfo {
+    pub name: String,
+    pub path: String,
+    pub seconds: f32,
+}
+
+/// 列出录音目录里的所有 take，新的在前。
+#[tauri::command]
+pub fn list_recordings(app: tauri::AppHandle) -> Vec<TakeInfo> {
+    let Ok(dir) = recordings_dir(&app) else {
+        return Vec::new();
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(std::time::SystemTime, TakeInfo)> = Vec::new();
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("wav") {
+            continue;
+        }
+        // 只读文件头拿时长 —— 列目录不该把每个文件都读进内存
+        let secs = voice_audio::wav::probe(&p).map(|(_, s)| s).unwrap_or(0.0);
+        let modified = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        out.push((
+            modified,
+            TakeInfo {
+                name: p.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+                path: p.to_string_lossy().into_owned(),
+                seconds: secs,
+            },
+        ));
+    }
+    out.sort_by(|a, b| b.0.cmp(&a.0));
+    out.into_iter().map(|(_, t)| t).collect()
+}
+
+/// 参考音频分析结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimbreSuggestion {
+    /// 建议的共振峰平移（半音）。**这是声线的主维度。**
+    pub formant_shift: f32,
+    /// 建议的整体移调（半音）。恒为 0 —— 改了就不是这首歌了。
+    pub pitch_shift: f32,
+    /// 实测音高差（半音），仅供参考。正 = 参考音源更高。
+    pub pitch_delta: f32,
+    /// 0~1。低于 0.4 时 UI 必须明说"没把握"。
+    pub confidence: f32,
+    /// 频谱倾斜差（dB/八度）。⚠️ **当前引擎补不了这个差异**。
+    pub tilt_delta: f32,
+
+    pub source_f0: f32,
+    pub reference_f0: f32,
+    pub source_voiced_secs: f32,
+    pub reference_voiced_secs: f32,
+    /// 素材不合格时的人话说明；合格时为空串。
+    pub warning: String,
+}
+
+/// 比较「你的干声」与「参考音频」，给出角色参数建议。
+///
+/// # 为什么需要两份素材
+///
+/// 共振峰平移是个**相对量** —— "把你的声道缩放到它那么长"。
+/// 只给参考音频是算不出来的，必须知道你自己的起点在哪。
+///
+/// 所以源素材用你自己的录音（干声）。这也是录制功能存在的另一个理由。
+#[tauri::command]
+pub fn suggest_character(
+    reference_path: String,
+    source_path: String,
+) -> Result<TimbreSuggestion, String> {
+    let refr = voice_audio::wav::read(&reference_path).map_err(|e| e.to_string())?;
+    let src = voice_audio::wav::read(&source_path).map_err(|e| e.to_string())?;
+
+    let a = voice_core::analyze_timbre(&src.samples, src.sample_rate as f32);
+    let b = voice_core::analyze_timbre(&refr.samples, refr.sample_rate as f32);
+    let m = voice_core::match_to(&a, &b);
+
+    // 素材不合格时**明确说出来**，而不是给一个悄悄不准的数字 ——
+    // 用户拿到错的结果只会怪工具。
+    let min = voice_core::timbre::MIN_VOICED_SECS;
+    let warning = if !a.is_usable() {
+        format!(
+            "你的录音里只有 {:.1} 秒浊音（至少要 {min:.1} 秒）—— 多唱几句再试",
+            a.voiced_secs
+        )
+    } else if !b.is_usable() {
+        format!(
+            "参考音频里只有 {:.1} 秒浊音（至少要 {min:.1} 秒）—— 换一段有人声的素材",
+            b.voiced_secs
+        )
+    } else if m.confidence < 0.4 {
+        "两段素材的谱包络差异不明显，结果把握不大；建议两边都用更长、更干净的素材".into()
+    } else {
+        String::new()
+    };
+
+    Ok(TimbreSuggestion {
+        formant_shift: m.formant_shift,
+        pitch_shift: m.pitch_shift,
+        pitch_delta: m.pitch_delta,
+        confidence: m.confidence,
+        tilt_delta: m.tilt_delta,
+        source_f0: a.median_f0,
+        reference_f0: b.median_f0,
+        source_voiced_secs: a.voiced_secs,
+        reference_voiced_secs: b.voiced_secs,
+        warning,
+    })
+}
+
 // ─────────────────────────── 角色 ───────────────────────────
 
 /// 读角色库。任何失败都退回内置角色，不向前端报错 ——

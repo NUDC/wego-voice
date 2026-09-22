@@ -22,7 +22,9 @@
  * 而那条线的许可证问题是实施方案里唯一还没关掉的 🔴。
  * 所以这一页从头到尾不出现"克隆""换成 XX 的声音"这类说法。
  */
-import type { Character } from "../ipc";
+import { useEffect, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { api, type Character, type TakeInfo, type TimbreSuggestion } from "../ipc";
 import { Field, Panel, Segmented } from "./ui";
 
 const TONICS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -242,6 +244,10 @@ export function CastView(p: CastProps) {
               />
             </Panel>
 
+            <FromReference
+              onApply={(formantShift) => patch({ formantShift })}
+            />
+
             <Panel title="这套方案能做到什么">
               <p className="hint">
                 共振峰 + 移调能做出<b>可控的声线</b>（更细/更粗、更高/更低），
@@ -263,6 +269,159 @@ export function CastView(p: CastProps) {
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * 参考音频 → 角色参数。
+ *
+ * # 为什么要两份素材
+ *
+ * 共振峰平移是**相对量**："把你的声道缩放到它那么长"。
+ * 只给参考音频算不出来 —— 必须知道你自己的起点在哪。
+ * 所以源素材用你自己录的干声，这也是录制功能存在的另一个理由。
+ *
+ * # 为什么只落一个参数
+ *
+ * 分析能给出音高差和频谱倾斜差，但**只有共振峰是引擎当前能施加的**。
+ * 音高差故意不用（改了就不是这首歌了），倾斜差没有 EQ 环节可落。
+ * 这两项如实显示、但不写进角色 —— 报出来是为了说清"还差在哪"，
+ * 不是假装已经做到了。
+ */
+function FromReference({ onApply }: { onApply: (formantShift: number) => void }) {
+  const [takes, setTakes] = useState<TakeInfo[]>([]);
+  const [source, setSource] = useState("");
+  const [reference, setReference] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [result, setResult] = useState<TimbreSuggestion | null>(null);
+
+  useEffect(() => {
+    api
+      .listRecordings()
+      .then((t) => {
+        setTakes(t);
+        setSource((s) => s || t[0]?.path || "");
+      })
+      .catch((e) => setErr(String(e)));
+  }, []);
+
+  // 拖拽接文件路径。
+  //
+  // 走 Tauri 的原生 drag-drop 事件而不是 HTML5 的：浏览器的 File 对象
+  // **拿不到真实路径**，只能读出字节再传给 Rust —— 一段 2 分钟的 WAV
+  // 有二十多 MB，过 IPC 传它纯属自找麻烦。
+  useEffect(() => {
+    const un = getCurrentWebview().onDragDropEvent((e) => {
+      if (e.payload.type !== "drop") return;
+      const p = e.payload.paths.find((x) => x.toLowerCase().endsWith(".wav"));
+      if (p) {
+        setReference(p);
+        setResult(null);
+        setErr("");
+      } else {
+        setErr("只认 WAV 文件");
+      }
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  const run = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      setResult(await api.suggestCharacter(reference, source));
+    } catch (e) {
+      setErr(String(e));
+      setResult(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
+  return (
+    <Panel title="从参考音频生成">
+      <div className="cast-grid">
+        <Field label="参考音频" hint="把 WAV 拖进窗口任意位置">
+          <div className={`drop ${reference ? "has" : ""}`}>
+            {reference ? fileName(reference) : "拖一个 WAV 进来"}
+          </div>
+        </Field>
+
+        <Field label="我的干声" hint="用你自己的录音当起点 —— 共振峰平移是相对量">
+          <select value={source} onChange={(e) => setSource(e.target.value)}>
+            {takes.length === 0 && <option value="">还没有录音</option>}
+            {takes.map((t) => (
+              <option key={t.path} value={t.path}>
+                {t.name}（{t.seconds.toFixed(1)}s）
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      <button
+        className="btn primary"
+        onClick={run}
+        disabled={!reference || !source || busy}
+        type="button"
+      >
+        {busy ? "分析中…" : "分析"}
+      </button>
+
+      {err && <p className="hint warn">{err}</p>}
+
+      {result && (
+        <>
+          <div className="suggest">
+            <div className="suggest-main">
+              <span className="suggest-num mono">
+                {result.formantShift > 0 ? "+" : ""}
+                {result.formantShift.toFixed(1)}
+              </span>
+              <span className="suggest-unit">半音共振峰</span>
+              <button
+                className="btn tiny"
+                onClick={() => onApply(result.formantShift)}
+                type="button"
+              >
+                应用到当前角色
+              </button>
+            </div>
+            <div className="suggest-sub mono">
+              把握 {(result.confidence * 100).toFixed(0)}% ·
+              你 {result.sourceF0.toFixed(0)}Hz / 参考 {result.referenceF0.toFixed(0)}Hz
+            </div>
+          </div>
+
+          {result.warning && <p className="hint warn">{result.warning}</p>}
+
+          <p className="hint">
+            这是个<b>起点，不是答案</b>。合成素材上实测估计偏保守约 20%
+            （真值 +3.9 时给出 +3.0）—— 应用之后拿滑杆凭耳朵再推一点，
+            通常会更像。声线是听出来的。
+          </p>
+
+          <p className="hint">
+            <b>音高差 {result.pitchDelta > 0 ? "+" : ""}
+            {result.pitchDelta.toFixed(1)} 半音，刻意不采用。</b>
+            参考音源比你高不代表你该升调去唱 —— 那就不是这首歌了，
+            而且 PSOLA 超过 ±5 半音会有明显金属感。
+            「像另一个人」这件事主要由共振峰承担。
+            <br />
+            <br />
+            频谱倾斜差 {result.tiltDelta > 0 ? "+" : ""}
+            {result.tiltDelta.toFixed(1)} dB/八度 ——
+            <b>当前引擎补不了这个差异</b>（还没有 EQ 环节）。
+            这是纯 DSP 路线离"真的像"最主要的剩余差距。
+          </p>
+        </>
+      )}
+    </Panel>
   );
 }
 

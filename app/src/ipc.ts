@@ -180,6 +180,38 @@ export interface RecordingStatus {
   path: string | null;
 }
 
+/** 录音目录里的一条 take。 */
+export interface TakeInfo {
+  name: string;
+  path: string;
+  seconds: number;
+}
+
+/**
+ * 参考音频分析结果。
+ *
+ * ⚠️ 共振峰平移是**相对量** —— "把你的声道缩放到它那么长"。
+ * 所以必须同时有参考音频和你自己的干声，只给一边算不出来。
+ */
+export interface TimbreSuggestion {
+  /** 建议的共振峰平移（半音）。这是声线的主维度。 */
+  formantShift: number;
+  /** 恒为 0 —— 改了音高就不是这首歌了。 */
+  pitchShift: number;
+  /** 实测音高差（半音），仅供参考。 */
+  pitchDelta: number;
+  /** 0~1。低于 0.4 必须明说"没把握"。 */
+  confidence: number;
+  /** 频谱倾斜差（dB/八度）。⚠️ 当前引擎补不了。 */
+  tiltDelta: number;
+  sourceF0: number;
+  referenceF0: number;
+  sourceVoicedSecs: number;
+  referenceVoicedSecs: number;
+  /** 素材不合格时的人话说明；合格时为空串。 */
+  warning: string;
+}
+
 export interface CharacterStore {
   characters: Character[];
   activeId: string;
@@ -201,6 +233,10 @@ export const api = {
   recordingStatus: () => invoke<RecordingStatus>("recording_status"),
   /** 在资源管理器里打开录音目录，返回路径。 */
   revealRecordings: () => invoke<string>("reveal_recordings"),
+
+  listRecordings: () => invoke<TakeInfo[]>("list_recordings"),
+  suggestCharacter: (referencePath: string, sourcePath: string) =>
+    invoke<TimbreSuggestion>("suggest_character", { referencePath, sourcePath }),
 
   charactersLoad: () => invoke<CharacterStore>("characters_load"),
   charactersSave: (store: CharacterStore) =>

@@ -1283,3 +1283,58 @@ input[type="range"]:active::-webkit-slider-thumb {
   background: var(--bg-3);
   color: var(--fg);
 }
+
+/* 参考音频拖放区 */
+.drop {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px dashed var(--stroke);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--fg-3);
+  font-size: var(--t-label);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drop.has {
+  border-style: solid;
+  border-color: #2f3545;
+  color: var(--fg);
+}
+
+/* 分析结果 */
+.suggest {
+  margin-top: var(--s3);
+  padding: var(--s3);
+  background: var(--bg-2);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--accent);
+}
+
+.suggest-main {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.suggest-num {
+  font-size: var(--t-hero);
+  line-height: 1.1;
+  color: var(--fg);
+}
+
+.suggest-unit {
+  font-size: var(--t-label);
+  color: var(--fg-3);
+  margin-right: auto;
+}
+
+.suggest-sub {
+  margin-top: 4px;
+  font-size: var(--t-micro);
+  color: var(--fg-3);
+}

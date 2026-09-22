@@ -95,6 +95,20 @@ enum Cmd {
     ///
     /// 这个子命令喂合成浊音，逼着走完整的分析+合成路径，
     /// 是唯一能把"某个参数贵不贵"量准的地方。
+    /// 比较两段音频的声线，输出角色参数建议
+    ///
+    /// 这条路径的 UI 入口要靠拖拽文件，没法自动化验证；
+    /// 命令行入口能把「读 WAV → 分析 → 匹配」整条链路跑通。
+    Timbre {
+        /// 参考音频（想模拟的那个声线）
+        #[arg(long)]
+        reference: String,
+
+        /// 你自己的干声（起点）
+        #[arg(long)]
+        source: String,
+    },
+
     Dsp {
         /// 模拟多少秒的音频
         #[arg(short, long, default_value_t = 30.0)]
@@ -307,7 +321,72 @@ fn main() -> Result<()> {
         }
 
         Cmd::Dsp { duration, block } => dsp_cost(&cli.audio, duration, block),
+
+        Cmd::Timbre { reference, source } => timbre_report(&reference, &source),
     }
+}
+
+/// 声线比较。读两个 WAV，输出角色参数建议。
+fn timbre_report(reference: &str, source: &str) -> Result<()> {
+    use voice_audio::wav;
+
+    let r = wav::read(reference)?;
+    let s = wav::read(source)?;
+
+    let a = voice_core::analyze_timbre(&s.samples, s.sample_rate as f32);
+    let b = voice_core::analyze_timbre(&r.samples, r.sample_rate as f32);
+    let m = voice_core::match_to(&a, &b);
+
+    let line = |tag: &str, p: &voice_core::TimbreProfile, au: &wav::Audio| {
+        println!(
+            "  {tag:<8} {:.1}s（浊音 {:.1}s） {}ch @{}Hz  f0 中位 {:.0}Hz（{:.0}~{:.0}）{}",
+            au.duration_secs(),
+            p.voiced_secs,
+            au.channels,
+            au.sample_rate,
+            p.median_f0,
+            p.f0_low,
+            p.f0_high,
+            if p.is_usable() { "" } else { "  ⚠️ 素材不合格" }
+        );
+    };
+
+    println!("【素材】");
+    line("我的", &a, &s);
+    line("参考", &b, &r);
+
+    println!("
+【建议】");
+    println!(
+        "  共振峰平移   {:+.1} 半音   ← 这是声线的主维度，也是唯一会被采纳的值",
+        m.formant_shift
+    );
+    println!("  把握         {:.0}%", m.confidence * 100.0);
+
+    println!("
+【实测但不采纳】");
+    println!(
+        "  音高差       {:+.1} 半音   参考音源{}，但改音高就不是这首歌了",
+        m.pitch_delta,
+        if m.pitch_delta > 0.0 { "更高" } else { "更低" }
+    );
+    println!(
+        "  频谱倾斜差   {:+.1} dB/八度  参考{}，当前引擎没有 EQ 环节，补不了",
+        m.tilt_delta,
+        if m.tilt_delta > 0.0 { "更亮" } else { "更暗" }
+    );
+
+    if !a.is_usable() || !b.is_usable() {
+        println!(
+            "
+⚠️ 至少要 {:.1} 秒浊音才有意义 —— 上面的数字不要用。",
+            voice_core::timbre::MIN_VOICED_SECS
+        );
+    } else if m.confidence < 0.4 {
+        println!("
+⚠️ 把握不足 40%：两段谱包络差异不明显，换更长更干净的素材再试。");
+    }
+    Ok(())
 }
 
 /// 离线 DSP 成本测量。不碰声卡，喂合成浊音。
