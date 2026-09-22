@@ -153,12 +153,27 @@ impl AppState {
 /// 诊断页其实 10Hz 就够，将来可以分成两路不同频率。
 ///
 /// **注意这里推的全是标量**，没有任何采样点（架构红线 1）。
-pub fn spawn_pusher(app: AppHandle, hz: u32) {
+pub fn spawn_pusher(
+    app: AppHandle,
+    hz: u32,
+    tray: Option<std::sync::Arc<crate::tray::Tray<tauri::Wry>>>,
+) {
     let interval = std::time::Duration::from_millis((1000 / hz.max(1)).max(1) as u64);
     std::thread::spawn(move || loop {
         std::thread::sleep(interval);
         let state = app.state::<AppState>();
         let tick = state.tick();
+
+        // 托盘跟着一起刷。它内部会去重，只在内容真的变化时才写下去 ——
+        // 20Hz 地改托盘图标既浪费，也会在部分 Windows 版本上闪烁。
+        if let Some(t) = &tray {
+            let muted = state
+                .params()
+                .map(|p| p.monitor_muted.load(std::sync::atomic::Ordering::Relaxed))
+                .unwrap_or(true);
+            t.update(&tick, muted);
+        }
+
         // 前端没监听时 emit 失败是正常的，忽略即可
         let _ = app.emit("tick", tick);
     });

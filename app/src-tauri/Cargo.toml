@@ -18,7 +18,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 voice-audio.workspace = true
 voice-core.workspace = true
-tauri = { version = "2", features = [] }
+# tray-icon：系统托盘。它在这个产品里不是装饰 ——
+# 独占模式会占着声卡，托盘是让这件事一直可见的唯一办法（见 src/tray.rs）。
+tauri = { version = "2", features = ["tray-icon"] }
 clap.workspace = true
 log.workspace = true
 env_logger.workspace = true

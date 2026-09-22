@@ -17,6 +17,7 @@
 pub mod characters;
 pub mod commands;
 pub mod state;
+pub mod tray;
 
 use state::AppState;
 
@@ -34,7 +35,8 @@ pub fn run(autostart: bool, f0_floor: f32) {
     tauri::Builder::default()
         .manage(AppState::default())
         .setup(move |app| {
-            state::spawn_pusher(app.handle().clone(), TICK_HZ);
+            let tray = tray::build(app.handle())?;
+            state::spawn_pusher(app.handle().clone(), TICK_HZ, Some(tray));
             if autostart {
                 let handle = app.handle().clone();
                 // 放到后台线程：独占模式协商要几百毫秒，
@@ -60,6 +62,21 @@ pub fn run(autostart: bool, f0_floor: f32) {
                 });
             }
             Ok(())
+        })
+        // 关窗即退出，**并且显式停引擎**。
+        //
+        // 独占模式下声卡是被我们占着的，不显式释放就得等进程彻底收干净。
+        // 靠 `Drop` 也能停，但退出路径上托管状态的析构时机没有保证 ——
+        // 而"关了程序系统还是没声音"是最难让用户联想到本程序的故障。
+        //
+        // 顺带：这里刻意**不做**"关闭时最小化到托盘"。那等于让一个看不见的
+        // 进程继续占着声卡，正是托盘要避免的情况。想留后台用托盘菜单的
+        // 「隐藏窗口」—— 那是主动选择，不是默认行为。
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                use tauri::Manager;
+                window.state::<AppState>().stop();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::devices,
