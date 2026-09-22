@@ -30,11 +30,13 @@ pub mod fft;
 pub mod noise;
 pub mod psola;
 pub mod scale;
+pub mod tilt;
 pub mod timbre;
 pub mod yin;
 
 pub use noise::{to_dbfs, NoiseGate, NoiseGateConfig};
 pub use psola::{Psola, PsolaConfig};
+pub use tilt::Tilt;
 pub use timbre::{analyze as analyze_timbre, match_to, TimbreMatch, TimbreProfile};
 pub use scale::{
     cents_between, hz_to_midi, midi_to_hz, Key, RetuneConfig, RetuneFrame, Retuner, ScaleKind,
@@ -119,6 +121,7 @@ pub struct Corrector {
     retuner: Retuner,
     psola: Psola,
     gate: NoiseGate,
+    tilt: Tilt,
 
     /// YIN 的线性分析缓冲，长度恰为 `yin.required_len()`。
     /// 用 `copy_within` 左移，不重新分配。
@@ -144,6 +147,7 @@ impl Corrector {
             retuner: Retuner::new(cfg.retune, cfg.key),
             psola: Psola::new(cfg.psola),
             gate: NoiseGate::new(cfg.noise),
+            tilt: Tilt::new(cfg.sample_rate),
             analysis,
             since_analysis: 0,
             frame: AnalysisFrame::default(),
@@ -214,6 +218,19 @@ impl Corrector {
         self.formant_shift = semitones.clamp(-12.0, 12.0);
     }
 
+    /// 角色的频谱倾斜（dB/八度）。正 = 更亮，负 = 更暗。
+    ///
+    /// 这是声线的**第二个维度**：共振峰管"声道多长"，倾斜管"整体明暗"。
+    /// `timbre::match_to` 报出的 `tilt_delta` 就是喂给这里的。
+    pub fn set_tilt_db_per_oct(&mut self, s: f32) {
+        self.tilt.set_db_per_oct(s);
+    }
+
+    #[inline]
+    pub fn tilt_db_per_oct(&self) -> f32 {
+        self.tilt.db_per_oct()
+    }
+
     /// 噪声门余量（dB）。人声要高出实测本底这么多才放行。
     ///
     /// 调高：更不容易被风扇/电流声误触发，但会吃掉弱起音和收尾气声。
@@ -271,6 +288,14 @@ impl Corrector {
 
             self.feed_analysis(&input[off..off + take]);
             self.psola.process(&input[off..off + take], &mut output[off..off + take]);
+
+            // 频谱倾斜接在 PSOLA 之后：它塑形的是**输出**的明暗，
+            // 而分析路径读的是原始输入，所以不会反过来干扰音高检测。
+            //
+            // 旁路时连它一起跳过 —— A/B 盲测必须比的是同一件事。
+            if !self.bypass {
+                self.tilt.process(&mut output[off..off + take]);
+            }
 
             off += take;
             self.since_analysis += take;
@@ -543,6 +568,36 @@ mod tests {
             (c.last_frame().ratio - 1.0).abs() < 1e-6,
             "旁路状态下仍在变调：ratio={}",
             c.last_frame().ratio
+        );
+    }
+
+    /// 倾斜滤波是纯 IIR，没有缓冲 —— 端到端延迟必须一个样本都不涨。
+    ///
+    /// 这条是它能进实时链路的唯一理由（预算只剩 0.08ms），
+    /// 值得用一条断言钉死，而不是靠"我知道它不加延迟"。
+    #[test]
+    fn tilt_does_not_change_latency() {
+        let mut c = Corrector::new(CorrectorConfig::default());
+        let before = c.latency_samples();
+        c.set_tilt_db_per_oct(3.5);
+        assert_eq!(c.latency_samples(), before);
+        assert!((c.tilt_db_per_oct() - 3.5).abs() < 1e-6);
+    }
+
+    /// 旁路必须连倾斜一起旁路，否则 A/B 比的不是同一件事。
+    #[test]
+    fn bypass_also_bypasses_the_tilt() {
+        let input = sine(220.0, 24_000);
+        let mut plain = Corrector::new(CorrectorConfig::default());
+        plain.set_bypass(true);
+        let mut tilted = Corrector::new(CorrectorConfig::default());
+        tilted.set_bypass(true);
+        tilted.set_tilt_db_per_oct(4.0);
+
+        assert_eq!(
+            run(&mut plain, &input, 256),
+            run(&mut tilted, &input, 256),
+            "旁路状态下倾斜仍在生效"
         );
     }
 

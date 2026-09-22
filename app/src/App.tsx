@@ -247,6 +247,7 @@ export default function App() {
         retuneMs: 40,
         pitchShift: 0,
         formantShift: 0,
+        tiltDbPerOct: 0,
         note: "",
         builtin: false,
       },

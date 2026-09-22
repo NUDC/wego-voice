@@ -187,6 +187,10 @@ struct AudioOpts {
     #[arg(long, global = true)]
     record: Option<String>,
 
+    /// 角色：频谱倾斜（dB/八度）。正 = 更亮。
+    #[arg(long, global = true)]
+    tilt: Option<f32>,
+
     /// 噪声门余量（dB）。人声要高出实测本底这么多才进入音高检测。
     /// 0 = 关掉门。默认 12。
     #[arg(long, global = true)]
@@ -241,6 +245,7 @@ struct Args {
     pitch_shift: Option<f32>,
     formant_shift: Option<f32>,
     noise_gate_db: Option<f32>,
+    tilt: Option<f32>,
     record: Option<String>,
     muted: bool,
     f0_floor: f32,
@@ -263,6 +268,7 @@ impl Args {
             pitch_shift: audio.pitch_shift,
             formant_shift: audio.formant_shift,
             noise_gate_db: audio.noise_gate_db,
+            tilt: audio.tilt,
             record: audio.record.clone(),
             muted: audio.mute,
             f0_floor: audio.f0_floor,
@@ -409,6 +415,7 @@ fn dsp_cost(audio: &AudioOpts, duration: f32, block: usize) -> Result<()> {
     }
     c.set_pitch_shift(audio.pitch_shift.unwrap_or(0.0));
     c.set_formant_shift(audio.formant_shift.unwrap_or(0.0));
+    c.set_tilt_db_per_oct(audio.tilt.unwrap_or(0.0));
 
     // 带共振峰的合成浊音：冲激串过二阶谐振器。
     // 纯正弦也能跑通，但它没有频谱包络，测不出共振峰平移的真实开销。
@@ -537,6 +544,9 @@ fn apply_params(engine: &AudioEngine, args: &Args) {
     }
     if let Some(v) = args.noise_gate_db {
         engine.params.set_noise_gate_db(v);
+    }
+    if let Some(v) = args.tilt {
+        engine.params.set_tilt_db_per_oct(v);
     }
     engine
         .params

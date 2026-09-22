@@ -47,6 +47,13 @@ function formantWord(v: number) {
   return `声道更长 —— 更粗、更"大只"`;
 }
 
+/** 倾斜的方向同样没有直觉，翻译成听感。 */
+function tiltWord(v: number) {
+  if (Math.abs(v) < 0.1) return "与原声相同";
+  if (v > 0) return "更亮、更薄 —— 齿音与气息更突出";
+  return "更暗、更厚 —— 低频占比更高";
+}
+
 function pitchWord(v: number) {
   if (Math.abs(v) < 0.25) return "不移调";
   return `整体${v > 0 ? "升" : "降"} ${Math.abs(v).toFixed(1)} 个半音`;
@@ -207,6 +214,21 @@ export function CastView(p: CastProps) {
               </p>
 
               <Knob
+                label="频谱倾斜"
+                value={active.tiltDbPerOct}
+                min={-4}
+                max={4}
+                step={0.1}
+                unit="dB/八度"
+                read={tiltWord(active.tiltDbPerOct)}
+                onChange={(v) => patch({ tiltDbPerOct: v })}
+              />
+              <p className="hint">
+                声线的<b>第二个维度</b>：共振峰管"声道多长"，倾斜管"整体明暗"。
+                两级一阶滤波器，同样<b>不增加缓冲延迟</b>。
+              </p>
+
+              <Knob
                 label="整体移调"
                 value={active.pitchShift}
                 min={-12}
@@ -244,9 +266,7 @@ export function CastView(p: CastProps) {
               />
             </Panel>
 
-            <FromReference
-              onApply={(formantShift) => patch({ formantShift })}
-            />
+            <FromReference onApply={patch} />
 
             <Panel title="这套方案能做到什么">
               <p className="hint">
@@ -288,7 +308,11 @@ export function CastView(p: CastProps) {
  * 这两项如实显示、但不写进角色 —— 报出来是为了说清"还差在哪"，
  * 不是假装已经做到了。
  */
-function FromReference({ onApply }: { onApply: (formantShift: number) => void }) {
+function FromReference({
+  onApply,
+}: {
+  onApply: (patch: { formantShift: number; tiltDbPerOct: number }) => void;
+}) {
   const [takes, setTakes] = useState<TakeInfo[]>([]);
   const [source, setSource] = useState("");
   const [reference, setReference] = useState("");
@@ -386,14 +410,22 @@ function FromReference({ onApply }: { onApply: (formantShift: number) => void })
               <span className="suggest-unit">半音共振峰</span>
               <button
                 className="btn tiny"
-                onClick={() => onApply(result.formantShift)}
+                onClick={() =>
+                  onApply({
+                    formantShift: result.formantShift,
+                    // 倾斜差直接就是要施加的量：把我的明暗推到它那里
+                    tiltDbPerOct: Math.max(-4, Math.min(4, result.tiltDelta)),
+                  })
+                }
                 type="button"
               >
                 应用到当前角色
               </button>
             </div>
             <div className="suggest-sub mono">
-              把握 {(result.confidence * 100).toFixed(0)}% ·
+              倾斜 {result.tiltDelta > 0 ? "+" : ""}
+              {result.tiltDelta.toFixed(1)} dB/八度 · 把握{" "}
+              {(result.confidence * 100).toFixed(0)}% ·
               你 {result.sourceF0.toFixed(0)}Hz / 参考 {result.referenceF0.toFixed(0)}Hz
             </div>
           </div>
@@ -414,10 +446,8 @@ function FromReference({ onApply }: { onApply: (formantShift: number) => void })
             「像另一个人」这件事主要由共振峰承担。
             <br />
             <br />
-            频谱倾斜差 {result.tiltDelta > 0 ? "+" : ""}
-            {result.tiltDelta.toFixed(1)} dB/八度 ——
-            <b>当前引擎补不了这个差异</b>（还没有 EQ 环节）。
-            这是纯 DSP 路线离"真的像"最主要的剩余差距。
+            <b>共振峰和倾斜会一起落下去。</b>共振峰管声道长短，
+            倾斜管整体明暗 —— 两个维度都对上，才谈得上"像"。
           </p>
         </>
       )}

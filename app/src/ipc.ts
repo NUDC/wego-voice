@@ -139,6 +139,8 @@ export interface ParamUpdate {
   formantShift?: number;
   /** 噪声门余量（dB）。人声要高出实测本底这么多才进入音高检测。 */
   noiseGateDb?: number;
+  /** 角色：频谱倾斜（dB/八度）。 */
+  tiltDbPerOct?: number;
 }
 
 /**
@@ -160,6 +162,8 @@ export interface Character {
   pitchShift: number;
   /** 共振峰平移（半音）。声线的主维度，不动音高、不增加延迟。 */
   formantShift: number;
+  /** 频谱倾斜（dB/八度）。正 = 更亮。声线的第二个维度。 */
+  tiltDbPerOct: number;
   note: string;
   /** 内置角色可改可复位，但不能删。 */
   builtin: boolean;
@@ -202,7 +206,7 @@ export interface TimbreSuggestion {
   pitchDelta: number;
   /** 0~1。低于 0.4 必须明说"没把握"。 */
   confidence: number;
-  /** 频谱倾斜差（dB/八度）。⚠️ 当前引擎补不了。 */
+  /** 频谱倾斜差（dB/八度）。现在能施加了（tilt.rs）。 */
   tiltDelta: number;
   sourceF0: number;
   referenceF0: number;

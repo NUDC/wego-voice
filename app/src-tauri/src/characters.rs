@@ -38,6 +38,9 @@ pub struct Character {
     pub pitch_shift: f32,
     /// 共振峰平移（半音）。
     pub formant_shift: f32,
+    /// 频谱倾斜（dB/八度）。正 = 更亮。声线的第二个维度。
+    #[serde(default)]
+    pub tilt_db_per_oct: f32,
     /// 一句话听感说明。UI 直接显示，帮用户在不试听的情况下选。
     pub note: String,
     /// 内置角色：可以改、可以复位，但不能删。
@@ -67,25 +70,32 @@ impl Default for CharacterStore {
 /// 排序刻意从"几乎不动"到"变形最大"，因为失真是单调递增的 ——
 /// 用户从上往下试，能直接听出代价是怎么涨上来的。
 pub fn builtins() -> Vec<Character> {
-    let c = |id: &str, name: &str, pitch: f32, formant: f32, retune: f32, note: &str| Character {
+    let c = |id: &str,
+             name: &str,
+             pitch: f32,
+             formant: f32,
+             tilt: f32,
+             retune: f32,
+             note: &str| Character {
         id: id.into(),
         name: name.into(),
         key: "C".into(),
         retune_ms: retune,
         pitch_shift: pitch,
         formant_shift: formant,
+        tilt_db_per_oct: tilt,
         note: note.into(),
         builtin: true,
     };
 
     vec![
-        c("origin", "原声", 0.0, 0.0, 40.0, "只修音准，完全不动声线"),
-        c("teen", "少年", 0.0, 2.0, 40.0, "声道略短、清亮一点；音高不动，几乎听不出处理痕迹"),
-        c("lady", "御姐", 1.0, 1.5, 45.0, "偏低的女声，保留较多原音色"),
-        c("girl", "少女", 2.0, 4.0, 30.0, "女声方向最稳的一档"),
-        c("kid", "童声", 5.0, 6.0, 25.0, "变形最大：移调 5 个半音，会带明显金属感"),
-        c("uncle", "大叔", -3.0, -3.0, 50.0, "声道变长，整体压沉"),
-        c("robot", "电音", 0.0, 0.0, 0.0, "瞬间吸附到音阶上，不模拟任何人声"),
+        c("origin", "原声", 0.0, 0.0, 0.0, 40.0, "只修音准，完全不动声线"),
+        c("teen", "少年", 0.0, 2.0, 0.8, 40.0, "声道略短、清亮一点；音高不动，几乎听不出处理痕迹"),
+        c("lady", "御姐", 1.0, 1.5, -0.5, 45.0, "偏低的女声，保留较多原音色"),
+        c("girl", "少女", 2.0, 4.0, 1.2, 30.0, "女声方向最稳的一档"),
+        c("kid", "童声", 5.0, 6.0, 1.8, 25.0, "变形最大：移调 5 个半音，会带明显金属感"),
+        c("uncle", "大叔", -3.0, -3.0, -1.5, 50.0, "声道变长，整体压沉"),
+        c("robot", "电音", 0.0, 0.0, 0.0, 0.0, "瞬间吸附到音阶上，不模拟任何人声"),
     ]
 }
 
@@ -179,6 +189,11 @@ mod tests {
         for c in builtins() {
             assert!(c.pitch_shift.abs() <= 12.0, "{} 移调越界", c.name);
             assert!(c.formant_shift.abs() <= 12.0, "{} 共振峰越界", c.name);
+            assert!(
+                c.tilt_db_per_oct.abs() <= voice_core::tilt::MAX_DB_PER_OCT,
+                "{} 倾斜越界",
+                c.name
+            );
             assert!(c.retune_ms >= 0.0, "{} 修正速度为负", c.name);
             assert!(
                 voice_audio::parse_key(&c.key).is_some(),

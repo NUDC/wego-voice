@@ -407,6 +407,8 @@ impl RenderHalf {
             .set_formant_shift(self.params.formant_shift());
         self.corrector
             .set_noise_gate_db(self.params.noise_gate_db());
+        self.corrector
+            .set_tilt_db_per_oct(self.params.tilt_db_per_oct());
         self.corrector.set_bypass(self.params.bypass.load(REL));
 
         // --- DSP ---

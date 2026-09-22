@@ -110,6 +110,8 @@ pub struct ParamUpdate {
     pub formant_shift: Option<f32>,
     /// 噪声门余量（dB）。人声要高出实测本底这么多才进入音高检测。
     pub noise_gate_db: Option<f32>,
+    /// 角色：频谱倾斜（dB/八度）。
+    pub tilt_db_per_oct: Option<f32>,
 }
 
 #[tauri::command]
@@ -142,6 +144,9 @@ pub fn set_params(state: State<AppState>, upd: ParamUpdate) -> Result<(), String
     }
     if let Some(v) = upd.noise_gate_db {
         p.set_noise_gate_db(v);
+    }
+    if let Some(v) = upd.tilt_db_per_oct {
+        p.set_tilt_db_per_oct(v);
     }
     Ok(())
 }
@@ -409,6 +414,7 @@ pub fn apply_character(state: State<AppState>, character: Character) -> Result<(
     p.set_retune_ms(character.retune_ms.clamp(0.0, 500.0));
     p.set_pitch_shift(character.pitch_shift);
     p.set_formant_shift(character.formant_shift);
+    p.set_tilt_db_per_oct(character.tilt_db_per_oct);
     Ok(())
 }
 

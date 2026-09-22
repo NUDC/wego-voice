@@ -27,6 +27,8 @@ pub struct Params {
     formant_shift: AtomicU32,
     /// 噪声门余量（dB）。人声要高出实测本底这么多才进入音高检测。
     noise_gate_db: AtomicU32,
+    /// 角色：频谱倾斜（dB/八度）。f32 位模式。
+    tilt_db_per_oct: AtomicU32,
 }
 
 impl Default for Params {
@@ -41,6 +43,7 @@ impl Default for Params {
             pitch_shift: AtomicU32::new(0.0f32.to_bits()),
             formant_shift: AtomicU32::new(0.0f32.to_bits()),
             noise_gate_db: AtomicU32::new(12.0f32.to_bits()),
+            tilt_db_per_oct: AtomicU32::new(0.0f32.to_bits()),
         }
     }
 }
@@ -84,6 +87,14 @@ impl Params {
 
     pub fn set_noise_gate_db(&self, v: f32) {
         self.noise_gate_db.store(v.clamp(0.0, 40.0).to_bits(), REL);
+    }
+
+    pub fn tilt_db_per_oct(&self) -> f32 {
+        f32::from_bits(self.tilt_db_per_oct.load(REL))
+    }
+
+    pub fn set_tilt_db_per_oct(&self, v: f32) {
+        self.tilt_db_per_oct.store(v.clamp(-4.0, 4.0).to_bits(), REL);
     }
 
     pub fn key(&self) -> Key {
