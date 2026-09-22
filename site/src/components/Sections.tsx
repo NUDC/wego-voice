@@ -1,10 +1,8 @@
 import {
   BUDGET_SCALE_MS,
   FACTS,
-  FAQ,
   FEATURES,
   LATENCY_BUDGET,
-  POSITIONING,
   REPO,
   REQUIREMENTS,
 } from "../content";
@@ -23,6 +21,16 @@ export function Features() {
           </article>
         ))}
       </div>
+
+      {/* 原来这条在 FAQ 里。FAQ 删掉之后必须搬过来 ——
+          它不是营销文案，是**能力边界 + 使用者义务**的公开声明，
+          对应实施方案定调表 #16b。 */}
+      <p className="note">
+        声线塑形<b>做不到「像某个指定的人」</b>，也不提供任何声线来源 ——
+        不上架、不托管任何人的声纹，参考素材完全由你自己提供。
+        相应地，<b>取得被模拟者同意是使用者的责任</b>，软件在导入时会明确提示；
+        所有输出都带 AI 生成标识与不可听水印，不可关闭。
+      </p>
     </Section>
   );
 }
@@ -107,7 +115,7 @@ export function HowItWorks() {
 export function Requirements() {
   return (
     <Section id="require" band>
-      <h2>硬件要求（请先确认）</h2>
+      <h2>跑起来需要什么</h2>
 
       <div className="req">
         <div className="req-item yes">
@@ -136,42 +144,22 @@ export function Requirements() {
         用蓝牙耳机时软件不会假装能用：它会检测到并切换成纯视觉模式
         （只看音高条，不听修正声），同时明确告诉你原因。
       </p>
-    </Section>
-  );
-}
 
-export function Positioning() {
-  return (
-    <Section>
-      <h2>这是个工具，不是 App</h2>
-      <div className="two">
-        <div>
-          <h4>是</h4>
-          <TickList items={POSITIONING.is} />
-        </div>
-        <div>
-          <h4>不是</h4>
-          <TickList items={POSITIONING.isnt} kind="cross" />
-        </div>
-      </div>
-      <p className="note">
-        给要<b>把唱的东西做成成品</b>的人用：翻唱创作者、内容作者、
-        自弹自唱、想练音准的人。
+      {/* 首屏那句"会拦一下，怎么过"链到这里。
+          两种症状看起来完全不同，所以分开写 —— 用户是按现象找答案的。 */}
+      <h3>第一次运行</h3>
+      <p className="para">
+        <strong>弹出「Windows 已保护你的电脑」</strong> ——
+        程序未做代码签名，点「更多信息 → 仍要运行」即可。
+        不放心的话{" "}
+        <a href={`${REPO}/releases`}>Release 页</a>
+        附有 SHA256，可以自己核对。
       </p>
-    </Section>
-  );
-}
-
-export function Faq() {
-  return (
-    <Section id="faq" band>
-      <h2>常见问题</h2>
-      {FAQ.map((item) => (
-        <details key={item.q}>
-          <summary>{item.q}</summary>
-          <p>{item.a}</p>
-        </details>
-      ))}
+      <p className="para">
+        <strong>双击完全没反应</strong> —— 多半是缺 WebView2 运行时。
+        这种情况程序会弹窗说明原因，不会静默失败；
+        如果连弹窗都没有，那是被安全软件拦在了启动之前。
+      </p>
     </Section>
   );
 }

@@ -37,15 +37,9 @@ export function StatusBadge({ status }: { status: Status }) {
   );
 }
 
-export function TickList({
-  items,
-  kind = "tick",
-}: {
-  items: string[];
-  kind?: "tick" | "cross";
-}) {
+export function TickList({ items }: { items: string[] }) {
   return (
-    <ul className={kind === "tick" ? "ticks" : "crosses"}>
+    <ul className="ticks">
       {items.map((it) => (
         <li key={it}>
           <RichText text={it} />

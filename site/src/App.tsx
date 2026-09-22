@@ -1,10 +1,8 @@
 import { Hero, Nav } from "./components/Hero";
 import {
-  Faq,
   Features,
   Footer,
   HowItWorks,
-  Positioning,
   Requirements,
 } from "./components/Sections";
 
@@ -22,8 +20,6 @@ export default function App() {
         <Features />
         <HowItWorks />
         <Requirements />
-        <Positioning />
-        <Faq />
       </main>
       <Footer />
     </>

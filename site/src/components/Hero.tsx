@@ -95,7 +95,7 @@ export function Hero() {
           {RELEASE.url && (
             <>
               {" "}首次运行 Windows 会拦一下 ——{" "}
-              <a href="#faq">怎么过</a>。
+              <a href="#require">怎么过</a>。
             </>
           )}
         </p>

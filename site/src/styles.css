@@ -560,8 +560,7 @@ p strong {
   margin: 0 0 14px;
 }
 
-ul.ticks,
-ul.crosses {
+ul.ticks {
   list-style: none;
   padding: 0;
   margin: 0 0 16px;
@@ -569,8 +568,7 @@ ul.crosses {
   font-size: 15px;
 }
 
-ul.ticks li,
-ul.crosses li {
+ul.ticks li {
   padding-left: 24px;
   position: relative;
   margin-bottom: 7px;
@@ -581,13 +579,6 @@ ul.ticks li::before {
   position: absolute;
   left: 0;
   color: var(--ok);
-}
-
-ul.crosses li::before {
-  content: "✕";
-  position: absolute;
-  left: 0;
-  color: var(--ghost);
 }
 
 .status {
@@ -760,65 +751,6 @@ ul.crosses li::before {
 
 .req-item b {
   color: var(--text);
-}
-
-/* ───── FAQ ───── */
-details {
-  border-bottom: 1px solid var(--line);
-  padding: 18px 0;
-  max-width: var(--prose);
-}
-
-summary {
-  cursor: pointer;
-  font-size: 16px;
-  font-weight: 500;
-  list-style: none;
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-summary::-webkit-details-marker {
-  display: none;
-}
-
-summary::before {
-  content: "+";
-  color: var(--accent);
-  font-family: var(--mono);
-  flex-shrink: 0;
-}
-
-details[open] summary::before {
-  content: "−";
-}
-
-details[open] summary {
-  color: var(--text);
-}
-
-details p {
-  color: var(--dim);
-  font-size: 15px;
-  margin: 12px 0 0 24px;
-}
-
-/* 下载按钮下面那行事实：平台 / 体积 / 形态。
-   底部的下载卡片删掉之后，这些信息得有个去处 —— 放按钮正下方最合适，
-   用户正要点的时候就看见了。 */
-.dl-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin: 0 0 14px;
-  font-size: 13px;
-  color: var(--faint);
-}
-
-.dl-meta span + span::before {
-  content: "·";
-  margin-right: 10px;
 }
 
 /* ───── 页脚 ───── */
