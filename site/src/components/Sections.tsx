@@ -14,7 +14,7 @@ import { RichText, Section, StatusBadge, TickList } from "./Bits";
 export function Features() {
   return (
     <Section band>
-      <div className="two">
+      <div className="cards">
         {FEATURES.map((f) => (
           <article key={f.title}>
             <h3 style={{ marginTop: 0 }}>{f.title}</h3>

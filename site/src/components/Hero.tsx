@@ -60,7 +60,8 @@ export function Hero() {
         </h1>
         <p className="lede">
           实时修音直接进耳返 —— 不是唱完再修，是<strong>唱的当下</strong>
-          就听到。录完把干声换成想要的声线，分轨导出，直接进 DAW。
+          就听到。声线也能当场改：共振峰与明暗可调，
+          <strong>不动音高、不加延迟</strong>。干声原样落盘，随时重来。
         </p>
 
         <div className="hero-actions">

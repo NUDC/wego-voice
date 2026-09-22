@@ -492,6 +492,39 @@ p strong {
   font-size: 16px;
 }
 
+/* 功能卡。三张，宽屏排一行，窄屏自动折。 */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 22px;
+}
+
+.cards > article {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 24px 22px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.cards > article h3 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+
+.cards > article p {
+  color: var(--dim);
+  margin: 0 0 14px;
+  font-size: 15px;
+}
+
+/* 状态徽章压到卡片底部，三张卡的徽章才会齐平 */
+.cards > article .status {
+  margin-top: auto;
+  align-self: flex-start;
+}
+
 /* ───── 两栏 ───── */
 .two {
   display: grid;
