@@ -4,7 +4,7 @@
 //! 延迟与 xrun 测量。
 //!
 //! 这一层**只做 I/O 与调度**，所有 DSP 在 [`voice_core`] 里。
-//! 分开是为了让 DSP 核心能脱离 cpal 复用（见实施方案 §9.3）。
+//! 分开是为了让 DSP 核心能脱离 cpal 复用 —— 将来做 CLAP 插件时原样搬走。
 //!
 //! ## 两个宿主，同一套引擎
 //!
@@ -43,7 +43,7 @@ pub type RecorderSlot = std::sync::Arc<std::sync::Mutex<Option<Recorder>>>;
 
 /// Phase 0 的判定阈值，集中在这里，避免散落在各处各写一份。
 ///
-/// 来源：实施方案 §3.3 延迟预算与 §7 验收指标。
+/// 30ms 是自定的 No-Go 线；50ms 起触发 DAF 效应，产品比不开更糟。
 pub mod thresholds {
     /// 端到端耳返延迟的 No-Go 线（毫秒）。超过即 Phase 0 不通过。
     pub const LATENCY_NO_GO_MS: f32 = 30.0;

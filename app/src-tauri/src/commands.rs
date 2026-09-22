@@ -16,7 +16,7 @@ use crate::state::{AppState, Tick};
 /// 前端传来的启动参数。
 ///
 /// 全部可选：不填就用实测验证过的生产默认值
-/// （WASAPI 独占、水位 2.5、f0_floor 130 —— 见 docs/Phase0-实测记录.md）。
+/// （WASAPI 独占、水位 2.5、f0_floor 130）。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartRequest {

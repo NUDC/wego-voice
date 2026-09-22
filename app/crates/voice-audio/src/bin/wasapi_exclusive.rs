@@ -297,7 +297,7 @@ mod windows_impl {
         if io + DSP_MS <= NO_GO_MS {
             println!("  ✅ 默认配置（f0_floor=100）即可进线：{:.2} ms", io + DSP_MS);
         } else if any_pass {
-            println!("  🟡 需要调高 f0_floor 才能进线 —— 代价是低音区音质，见实施方案 §4。");
+            println!("  🟡 需要调高 f0_floor 才能进线 —— 代价是低音区音质。");
         } else {
             println!("  ❌ 即便 DSP 压到极限也进不了 {NO_GO_MS:.0}ms，本机现有设备无解。");
         }

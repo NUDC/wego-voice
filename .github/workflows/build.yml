@@ -17,7 +17,7 @@ on:
 
 jobs:
   build:
-    # 产品只做 Windows（定调表 #2），而且 WASAPI 独占是 Windows 特有的 ——
+    # 产品只做 Windows，而且 WASAPI 独占是 Windows 特有的 ——
     # 在别的 runner 上连编都编不过
     runs-on: windows-latest
     defaults:
@@ -60,7 +60,7 @@ jobs:
         continue-on-error: true
 
       # ⚠️ 必须走 tauri CLI。直接 cargo build 出来的包**前端是死的**：
-      # 开窗即空白、零 IPC。见 README 与 Phase0 踩坑表第 11 条。
+      # 开窗即空白、零 IPC。
       #
       # 只出免安装单文件（bundle.active = false）—— 顺带省掉 CI 里
       # 下载 NSIS 工具链那几十秒。

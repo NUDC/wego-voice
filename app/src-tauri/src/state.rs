@@ -12,7 +12,6 @@
 //! **采样点绝不经过这里。** IPC 只传控制指令（低频）和标量快照（30~60Hz）。
 //! 48kHz / 144 帧的块意味着每秒 333 次回调、每次 3ms 预算 ——
 //! Tauri 的 command/event 是 JSON 过 WebView bridge，扛不住这个速率。
-//! 详见 `docs/实施方案.md` §3.2 红线 1。
 
 use std::sync::{Arc, Mutex};
 

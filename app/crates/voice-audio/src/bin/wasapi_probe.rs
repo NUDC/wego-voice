@@ -340,7 +340,7 @@ mod probe {
         if out.client3_min.map(|c| c >= out.shared_default).unwrap_or(true) {
             println!("\n  ⚠️ 输出设备不支持 IAudioClient3 低延迟共享 —— 输出侧只能走独占模式，");
             println!("     代价是运行期间独占声卡、系统其他声音静音。");
-            println!("     （工具定位下这是可接受的，见实施方案定调表 #8b）");
+            println!("     （工具定位下这是可接受的）");
         }
     }
 

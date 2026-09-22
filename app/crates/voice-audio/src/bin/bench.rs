@@ -929,7 +929,6 @@ fn print_report(engine: &AudioEngine, args: &Args) {
             "本轮未通过。先看上面哪一项亮红。"
         }
     );
-    println!("\n  完整判定标准见 docs/实施方案.md §6 Phase 0。");
 }
 
 fn mark(ok: bool) -> &'static str {

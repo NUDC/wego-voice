@@ -7,7 +7,6 @@
  * ⚠️ **架构红线**：这条通道只传控制指令（低频）和标量快照（20Hz）。
  * 音频采样点永远不经过这里 —— 48kHz / 144 帧的块意味着每秒 333 次、
  * 每次 3ms 预算，而 IPC 是 JSON 过 WebView bridge，扛不住。
- * 详见 docs/实施方案.md §3.2 红线 1。
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
