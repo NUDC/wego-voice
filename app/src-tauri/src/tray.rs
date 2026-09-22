@@ -12,13 +12,17 @@
 //! 所以托盘图标的首要职责是**如实显示"声卡正被我占着"**，
 //! 快捷操作是顺带的。图标颜色因此随引擎状态变化，而不是一个静态 logo。
 //!
-//! # 关闭 = 退出，不是收进托盘
+//! # 关闭 = 收进托盘，退出只能从这里
 //!
-//! 很多带托盘的应用把关闭做成"最小化到托盘"。这里**刻意不那么做**：
-//! 那等于让一个看不见的进程继续占着声卡，正是上面要避免的情况。
+//! 窗口可以消失而进程继续跑，这让上面那个风险变成了常态 ——
+//! 所以**托盘不再是锦上添花，而是承重件**：
 //!
-//! 关闭就是退出、就是释放声卡。想留在后台的人可以用托盘菜单里的
-//! 「隐藏窗口」—— 那是主动选择，不是默认行为。
+//! - 图标颜色是"声卡现在是不是被占着"的唯一持续可见的信号
+//! - 菜单里的「退出 wego-voice」是唯一的退出口，而且它是纯 Rust 侧的，
+//!   前端出任何问题都不影响它 —— 不存在"窗口关不掉又退不出"的死角
+//!
+//! 第一次关闭时前端会弹一次说明并给「直接退出」的选项；
+//! 标题栏关闭按钮的 tooltip 也提前写明。
 //!
 //! # 图标是画出来的，不是资源文件
 //!
@@ -126,7 +130,9 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Arc<Tray<R>>> {
     let hide = MenuItem::with_id(app, "hide", "隐藏窗口", true, None::<&str>)?;
     let monitor = CheckMenuItem::with_id(app, "monitor", "耳返", true, false, None::<&str>)?;
     let engine = MenuItem::with_id(app, "engine", "停止引擎", false, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    // 关闭窗口只收进托盘，**这里是唯一的退出口** —— 文案要写满，
+    // 不能只写「退出」让用户猜是退出窗口还是退出程序。
+    let quit = MenuItem::with_id(app, "quit", "退出 wego-voice", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,

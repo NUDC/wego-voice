@@ -104,7 +104,13 @@ export function TitleBar({
             </svg>
           )}
         </button>
-        <button className="tb-btn close" onClick={() => win.close()} title="关闭">
+        {/* tooltip 要提前说清 —— 关闭不退出是反直觉的，
+            不能等用户点完发现窗口没了、程序还在才知道。 */}
+        <button
+          className="tb-btn close"
+          onClick={() => win.close()}
+          title="收进托盘（退出请用托盘菜单）"
+        >
           <svg width="10" height="10" viewBox="0 0 10 10">
             <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" fill="none" />
           </svg>

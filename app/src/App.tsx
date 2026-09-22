@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   api,
+  onCloseRequested,
   onTick,
   type BackendInfo,
   type Character,
@@ -119,6 +120,33 @@ export default function App() {
       window.removeEventListener("resize", probe);
     };
   }, [view, tick.running]);
+
+  // 关闭 = 收进托盘，退出只能从托盘菜单。
+  //
+  // 第一次关闭时弹一次说明 —— 窗口凭空消失而进程还在跑（而且可能正占着
+  // 声卡），不解释一句用户会以为程序已经退了。之后不再打扰。
+  //
+  // 标记存 localStorage：这是纯 UI 偏好，没必要为它开一个配置文件，
+  // 丢了也只是多弹一次。
+  const [askClose, setAskClose] = useState(false);
+  useEffect(() => {
+    const un = onCloseRequested(() => {
+      if (localStorage.getItem("closeHinted") === "1") {
+        api.hideWindow().catch(() => {});
+      } else {
+        setAskClose(true);
+      }
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  const hideToTray = useCallback(() => {
+    localStorage.setItem("closeHinted", "1");
+    setAskClose(false);
+    api.hideWindow().catch(() => {});
+  }, []);
 
   // 关键状态写进窗口标题 —— 最小化后仍能从任务栏看到延迟和 xrun
   useEffect(() => {
@@ -308,6 +336,38 @@ export default function App() {
         latencyMs={running ? tick.latencyMs : undefined}
         xruns={m.xruns}
       />
+
+      {askClose && (
+        <div className="sheet">
+          <div className="sheet-card">
+            <h2>关闭后会留在托盘</h2>
+            <p>
+              程序<b>不会退出</b>，继续在系统托盘里运行
+              {running && (
+                <>
+                  ，<b>并且继续独占声卡</b> ——
+                  这期间系统其他声音都是静音的
+                </>
+              )}
+              。
+            </p>
+            <p className="sheet-note">
+              托盘图标的颜色就是引擎状态：
+              <b>灰</b>=已停止 · <b>蓝</b>=运行中 · <b>琥珀</b>=有爆音。
+              要真正退出，右键托盘图标选「退出 wego-voice」。
+            </p>
+            <div className="sheet-act">
+              <button className="btn" onClick={() => api.quitApp()}>
+                直接退出
+              </button>
+              <button className="btn primary" onClick={hideToTray}>
+                知道了，收进托盘
+              </button>
+            </div>
+            <p className="sheet-note faint">这条只在第一次关闭时出现。</p>
+          </div>
+        </div>
+      )}
 
       <main>
         {error && (

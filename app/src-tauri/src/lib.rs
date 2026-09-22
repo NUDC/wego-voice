@@ -63,19 +63,26 @@ pub fn run(autostart: bool, f0_floor: f32) {
             }
             Ok(())
         })
-        // 关窗即退出，**并且显式停引擎**。
+        // 关闭 = 收进托盘，**不退出**。退出只能从托盘菜单。
         //
-        // 独占模式下声卡是被我们占着的，不显式释放就得等进程彻底收干净。
-        // 靠 `Drop` 也能停，但退出路径上托管状态的析构时机没有保证 ——
-        // 而"关了程序系统还是没声音"是最难让用户联想到本程序的故障。
+        // ⚠️ 这个设计有个真实风险，实现里必须消化掉：
+        // 独占模式下声卡是被我们占着的，而现在窗口可以消失、进程还在跑 ——
+        // 用户完全可能处在「电脑没声音，而且不知道是谁干的」这个状态里。
         //
-        // 顺带：这里刻意**不做**"关闭时最小化到托盘"。那等于让一个看不见的
-        // 进程继续占着声卡，正是托盘要避免的情况。想留后台用托盘菜单的
-        // 「隐藏窗口」—— 那是主动选择，不是默认行为。
+        // 三道防线：
+        //   1. 托盘图标按引擎状态变色（灰/蓝/琥珀），提示文字写明声卡被独占。
+        //      托盘从"锦上添花"变成了**承重件**。
+        //   2. 第一次关闭时由前端弹一次说明，并当场给「直接退出」的选项。
+        //   3. 标题栏关闭按钮的 tooltip 提前说清楚，不等用户点了才知道。
+        //
+        // 这里 `prevent_close` 之后把决定权交给前端。**不加超时兜底** ——
+        // 前端万一没响应，托盘菜单的「退出」是纯 Rust 侧的，永远可用，
+        // 不存在"窗口关不掉又退不出"的死角。
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                use tauri::Manager;
-                window.state::<AppState>().stop();
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri::Emitter;
+                api.prevent_close();
+                let _ = window.emit("close-requested", ());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -91,6 +98,8 @@ pub fn run(autostart: bool, f0_floor: f32) {
             commands::stop_recording,
             commands::recording_status,
             commands::reveal_recordings,
+            commands::hide_window,
+            commands::quit_app,
             commands::list_recordings,
             commands::suggest_character,
             commands::characters_load,
