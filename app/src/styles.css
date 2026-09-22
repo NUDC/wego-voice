@@ -477,9 +477,17 @@ main::-webkit-scrollbar-thumb:hover {
   align-items: center;
 }
 
-.key-pick select {
+/* ⚠️ 必须比 `.field select { width: 100% }` 更具体。
+   同特异性时后者靠后会赢，下拉框就撑满整格、把分段控件顶出面板 ——
+   截图里「大调」只剩半个"大"字露在边框外。 */
+.field .key-pick select {
   width: 72px;
   flex: 0 0 auto;
+}
+
+/* 兜底：窗口再窄也让它换行，而不是溢出 */
+.key-pick {
+  flex-wrap: wrap;
 }
 
 .slider-row {
@@ -527,6 +535,12 @@ main::-webkit-scrollbar-thumb:hover {
 }
 
 .cast-list {
+  /* 跟随滚动：右边编辑区很长，滚下去之后还得能换角色、能看到
+     当前选中的是谁 —— 否则要滚回顶部才能切换。 */
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - var(--titlebar-h) - var(--s4) * 2);
+  overflow-y: auto;
   background: var(--bg-1);
   border: 1px solid var(--stroke);
   border-radius: var(--radius);
@@ -644,23 +658,40 @@ main::-webkit-scrollbar-thumb:hover {
   border-left-color: var(--caution);
 }
 
+/* 概念说明讲一次，放面板顶部。拆成几段插在滑杆之间会把参数割碎。 */
+.knob-intro {
+  margin: 0 0 var(--s3);
+  padding-bottom: var(--s3);
+  border-bottom: 1px solid var(--stroke-soft);
+  font-size: var(--t-micro);
+  line-height: 1.7;
+  color: var(--fg-3);
+}
+
+.knob-intro b {
+  color: var(--fg-2);
+  font-weight: 600;
+}
+
 /* 一根滑杆 + 数值 + 听感说明。参数本身对用户没意义，说明才有。 */
 .knob {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: var(--s2) 0;
+  gap: 6px;
+  padding: var(--s3) 0;
   border-bottom: 1px solid var(--stroke-soft);
 }
 
 .knob:last-of-type {
   border-bottom: none;
+  padding-bottom: 0;
 }
 
+/* 数值紧跟标签，不做两端对齐 —— 面板一千像素宽，
+   甩到行尾会让「标签 → 把手 → 数值」横跨整屏才对得上。 */
 .knob-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: var(--s3);
 }
 
@@ -681,9 +712,27 @@ main::-webkit-scrollbar-thumb:hover {
   margin-left: 4px;
 }
 
+/* 轨道限宽：1000px 的滑杆不是"更好调"，是更难调 ——
+   同样的像素位移对应更大的参数变化区间反而更难瞄准，
+   而且把两端的信息扯得太开。多出来的宽度让给听感说明。 */
+.knob-body {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  min-width: 0;
+}
+
+.knob-body input[type="range"] {
+  flex: 0 1 340px;
+}
+
 .knob-read {
   font-size: var(--t-micro);
   color: var(--fg-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hint.warn {

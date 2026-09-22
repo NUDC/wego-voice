@@ -197,7 +197,15 @@ export function CastView(p: CastProps) {
               </Field>
             </Panel>
 
+            <FromReference onApply={patch} />
+
             <Panel title="声线">
+              {/* 概念说明放面板顶部讲一次，不要拆成两段插在滑杆中间 ——
+                  那样会把四个参数割成互不相连的碎块。 */}
+              <p className="knob-intro">
+                <b>共振峰</b>管声道多长，<b>倾斜</b>管整体明暗，两者都不增加延迟；
+                <b>移调</b>最容易失真，优先动前两个。
+              </p>
               <Knob
                 label="共振峰平移"
                 value={active.formantShift}
@@ -208,11 +216,6 @@ export function CastView(p: CastProps) {
                 read={formantWord(active.formantShift)}
                 onChange={(v) => patch({ formantShift: v })}
               />
-              <p className="hint">
-                声线的<b>主维度</b>：只缩放频谱包络，<b>不动音高、不增加一毫秒延迟</b>。
-                失真也最小 —— 想要自然的声线变化，优先动这一根。
-              </p>
-
               <Knob
                 label="频谱倾斜"
                 value={active.tiltDbPerOct}
@@ -223,11 +226,6 @@ export function CastView(p: CastProps) {
                 read={tiltWord(active.tiltDbPerOct)}
                 onChange={(v) => patch({ tiltDbPerOct: v })}
               />
-              <p className="hint">
-                声线的<b>第二个维度</b>：共振峰管"声道多长"，倾斜管"整体明暗"。
-                两级一阶滤波器，同样<b>不增加缓冲延迟</b>。
-              </p>
-
               <Knob
                 label="整体移调"
                 value={active.pitchShift}
@@ -266,14 +264,10 @@ export function CastView(p: CastProps) {
               />
             </Panel>
 
-            <FromReference onApply={patch} />
-
             <Panel title="这套方案能做到什么">
               <p className="hint">
-                共振峰 + 移调能做出<b>可控的声线</b>（更细/更粗、更高/更低），
-                也就是"像另一个人"。但它<b>做不到"像某个指定的人"</b> ——
-                那需要神经声码器与说话人嵌入，延迟和许可证都还没有结论
-                （实施方案定调表 #14，是目前唯一未关闭的阻塞项）。
+                共振峰 + 倾斜 + 移调能做出<b>可控的声线</b>，也就是"像另一个人"。
+                但<b>做不到"像某个指定的人"</b> —— 那需要神经声码器与说话人嵌入。
                 所以这里叫「角色」而不是「变声」：承诺的是声线塑形，不是克隆。
               </p>
             </Panel>
@@ -478,6 +472,8 @@ function Knob({
 }) {
   return (
     <div className="knob">
+      {/* 数值紧跟标签，而不是甩到行尾 ——
+          面板有一千像素宽，两端对齐会让眼睛横扫一整屏才对得上。 */}
       <div className="knob-head">
         <span className="knob-label">{label}</span>
         <span className={`knob-val mono ${tone ? `tone-${tone}` : ""}`}>
@@ -486,15 +482,17 @@ function Knob({
           <em>{unit}</em>
         </span>
       </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
-      <span className="knob-read">{read}</span>
+      <div className="knob-body">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+        <span className="knob-read">{read}</span>
+      </div>
     </div>
   );
 }
