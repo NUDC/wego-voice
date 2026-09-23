@@ -439,18 +439,6 @@ main::-webkit-scrollbar-thumb:hover {
   min-width: 112px;
 }
 
-/* 说明行常驻。做成「有时出现」的提示会在启动瞬间把整个控制台顶动。 */
-.console-note {
-  grid-column: 1 / -1;
-  margin: 0;
-  padding-top: var(--s2);
-  border-top: 1px solid var(--stroke-soft);
-  font-size: var(--t-micro);
-  line-height: 1.7;
-  color: var(--fg-3);
-  min-height: calc(1.7em + var(--s2));
-}
-
 .console-note b {
   color: var(--fg-2);
   font-weight: 600;
@@ -461,10 +449,17 @@ main::-webkit-scrollbar-thumb:hover {
   color: var(--caution);
 }
 
-/* 窗口偏窄时让字段换行，而不是挤到溢出 */
+/* 窗口偏窄时收成两列，而不是把三格挤扁。
+ *
+ * ⚠️ 这里原来写的是 `flex-wrap: wrap` —— 而 `.console-row` 早已改成 grid，
+ * 那条规则一直是**空转**的。窄窗口下三格照样各自变窄，
+ * 「输入设备 / 输出设备」这种长名字直接被省略号吃掉。
+ *
+ * 两行用同一套断点，断了之后列边界仍然对齐。 */
 @media (max-width: 1060px) {
   .console-row {
-    flex-wrap: wrap;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s3) var(--s5);
   }
 }
 
@@ -1500,58 +1495,46 @@ input[type="range"]:active::-webkit-slider-thumb {
   word-break: break-all;
 }
 
-/* ════════════ 调音页的录音条 ════════════ */
+/* ════════════ 调音页底栏 ════════════ */
 
-/* 录音是这个应用唯一会留下东西的动作，给它一整条而不是动作列里一个小按钮。
-   每个槽位常驻：计时器空闲时是 00:00，丢帧为 0 时也占位 ——
-   出现/消失会让这一行高度跳变，把整个控制台顶动。 */
-.rec-strip {
+/* 录音动作与常驻说明合成一条。
+ *
+ * 它们曾经是两条各带分隔线的横条，各自还带一句小灰字 —— 控制台底下
+ * 堆了两行说不清谁是谁的说明，整块就散了。合成一条之后节奏是固定的：
+ * **动作 → 说明 → 计数 → 入口**，和上面两行字段的「标签在上、控件在下」
+ * 是同一种秩序。
+ *
+ * 不给它背景和边框：控制台本身已经是一个框，框里再套框就是噪声。
+ * 只用一道浅线分隔，和 `.console-row + .console-row` 同一个手法。 */
+.console-foot {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: var(--s3);
-  margin-top: var(--s3);
-  padding: var(--s2) var(--s3);
-  background: var(--bg-2);
-  border: 1px solid var(--stroke-soft);
-  border-radius: var(--radius-sm);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--stroke-soft);
   min-width: 0;
 }
 
-.rec-strip.on {
-  border-color: #4a2b32;
-  background: rgba(240, 90, 90, 0.07);
-}
-
-.rec-strip .btn.rec {
+/* 定宽：文案在「录制 / 停止并保存」之间切换，不定宽的话一按下去
+   整条底栏都会向右推一截。红点常驻占位也是同一个道理。 */
+.console-foot .btn.rec {
   height: 30px;
+  min-width: 108px;
+  justify-content: center;
   flex: 0 0 auto;
 }
 
+/* 同样定宽：秒数跳动时右边的说明不该跟着左右平移 */
 .rec-time {
-  font-size: var(--t-lead);
-  color: var(--fg-2);
   flex: 0 0 auto;
+  width: 54px;
+  font-size: var(--t-lead);
+  color: var(--fg-4);
 }
 
-.rec-strip.on .rec-time {
+.rec-time.on {
   color: #f0a29c;
-}
-
-/* 说明占据弹性空间，窄窗口时先挤它 */
-.rec-say {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--t-micro);
-  color: var(--fg-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rec-say b {
-  color: var(--fg-2);
-  font-weight: 600;
 }
 
 .rec-drop {
@@ -1564,26 +1547,16 @@ input[type="range"]:active::-webkit-slider-thumb {
   color: var(--alert);
 }
 
-.rec-last {
-  flex: 0 1 auto;
+/* 说明行常驻。做成「有时出现」的提示会在启动瞬间把整个控制台顶动。
+   在底栏里它占据弹性空间 —— 窄窗口先挤它，按钮与计数不动。 */
+.console-note {
+  flex: 1 1 auto;
   min-width: 0;
+  margin: 0;
   font-size: var(--t-micro);
+  line-height: 1.7;
   color: var(--fg-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rec-last b {
-  color: var(--fg-2);
-  font-weight: 500;
-}
-
-/* 窄窗口时把说明收掉 —— 按钮、计时、丢帧、文件名都比它重要 */
-@media (max-width: 1100px) {
-  .rec-say {
-    display: none;
-  }
+  min-height: calc(1.7em + var(--s1));
 }
 
 /* ════════════ 录音页 ════════════ */

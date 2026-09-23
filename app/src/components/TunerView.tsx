@@ -212,15 +212,15 @@ export function TunerView(p: TunerProps) {
           </button>
         </div>
 
-        {/* ── 录音条 ──
+        {/* ── 底栏：录音动作 + 常驻说明 ──
 
-            录音是通往「录完再换声线」那条路的入口，也是这个应用唯一会
-            留下东西的动作 —— 它需要一块自己的地方，而不是动作列里一个
-            和「耳返」并排的小按钮。
+            这两样曾经是**两条**带分隔线的横条，各自带一句小灰字 ——
+            控制台底下堆了两行说不清谁是谁的说明文字，整块就散了。
+            合成一条之后节奏是固定的：**动作 → 说明 → 计数 → 入口**。
 
-            每个槽位**常驻**：计时器空闲时显示 00:00、丢帧计数为 0 时也占位。
-            出现/消失会让这一行的高度跳变，进而把整个控制台顶动。 */}
-        <div className={`rec-strip ${p.rec.recording ? "on" : ""}`}>
+            槽位常驻：计时器空闲时是 00:00、丢帧为 0 时也占位。
+            出现/消失会让行高跳变，进而把整个控制台顶动。 */}
+        <div className="console-foot">
           <button
             className={`btn rec ${p.rec.recording ? "on" : ""}`}
             onClick={p.onRecord}
@@ -238,71 +238,65 @@ export function TunerView(p: TunerProps) {
             {p.rec.recording ? "停止并保存" : "录制"}
           </button>
 
-          <span className="rec-time mono">{mmss(p.rec.seconds)}</span>
+          <span className={`rec-time mono ${p.rec.recording ? "on" : ""}`}>
+            {mmss(p.rec.seconds)}
+          </span>
 
-          <span className="rec-say">
-            {!p.running ? (
-              <>录音需要先<b>启动引擎</b> —— 采集链路在引擎里。</>
+          {/* 说明只换内容，不换位置。
+              优先级：丢帧 > 录音中 > 啸叫风险 > 刚存好 > 未启动 > 静音。
+              啸叫排在"刚存好"前面 —— 那是安全提示，不能被一条状态挤掉。 */}
+          <p
+            className={`console-note ${
+              p.rec.dropped > 0 || (p.running && !p.muted) ? "warn" : ""
+            }`}
+          >
+            {p.rec.dropped > 0 ? (
+              <>
+                ⚠️ 录音<b>丢了 {p.rec.dropped} 个样本</b> ——
+                文件里会有细微断裂。多半是磁盘被占住了（杀毒扫描、同步盘）。
+              </>
             ) : p.rec.recording ? (
               <>
-                正在录<b>干声</b>，不是耳返里那个修正过的声音。
+                正在录<b>干声</b>（不是耳返里那个修正过的声音）——
+                换角色重来、离线校准、将来送进声线转换，都从这份原始素材出发。
+              </>
+            ) : p.running && !p.muted ? (
+              <>
+                耳返已开启，<b>务必戴耳机</b> —— 外放会让麦克风拾到自己的输出，形成啸叫回路。
+              </>
+            ) : p.rec.path ? (
+              <>
+                已保存 <b title={p.rec.path}>{p.rec.path.split(/[\\/]/).pop()}</b>
+                {" —— 在录音页里试听、改名、离线校准。"}
+              </>
+            ) : !p.running ? (
+              <>
+                <b>请戴有线耳机</b>：蓝牙做不了实时耳返，延迟是无线协议的物理限制。
+                设备与模式会在启动后锁定，角色和修正速度则随时可调。
               </>
             ) : (
-              <>录<b>干声</b>：换角色重来、离线校准、将来送进声线转换，都从它出发。</>
+              <>
+                {active && (
+                  <>
+                    角色<b>「{active.name}」</b>：{active.note}
+                    {" · "}
+                  </>
+                )}
+                耳返<b>静音中</b> —— 打开后才能边唱边听到。
+              </>
             )}
-          </span>
+          </p>
 
-          {/* 丢帧必须报出来，而且要**常驻**一个槽位：
+          {/* 丢帧**常驻**一个槽位，而不是出问题才冒出来：
               拿着有断裂的素材去做后续处理，事后根本查不出原因。 */}
           <span className={`rec-drop mono ${p.rec.dropped > 0 ? "bad" : ""}`}>
-            {p.rec.dropped > 0 ? `丢帧 ${p.rec.dropped}` : "丢帧 0"}
-          </span>
-
-          <span className="rec-last">
-            {p.rec.path ? (
-              <>
-                {p.rec.recording ? "正在写入：" : "已保存："}
-                <b title={p.rec.path}>{p.rec.path.split(/[\\/]/).pop()}</b>
-              </>
-            ) : (
-              <span className="dim">本次还没有录音</span>
-            )}
+            丢帧 {p.rec.dropped}
           </span>
 
           <button className="btn tiny" onClick={p.onTakes} type="button">
             录音页
           </button>
         </div>
-
-        {/* 说明行永远存在，只换内容 —— 否则出现/消失会把整个控制台顶动。
-            录音相关的状态已经归上面那条，这里只管引擎与耳返。 */}
-        <p className={`console-note ${p.rec.dropped > 0 || (p.running && !p.muted) ? "warn" : ""}`}>
-          {p.rec.dropped > 0 ? (
-            <>
-              ⚠️ 录音<b>丢了 {p.rec.dropped} 个样本</b> ——
-              文件里会有细微断裂。多半是磁盘被占住了（杀毒扫描、同步盘）。
-            </>
-          ) : !p.running ? (
-            <>
-              <b>请戴有线耳机</b>：蓝牙做不了实时耳返，延迟是无线协议的物理限制。
-              设备与模式会在启动后锁定，角色和修正速度则随时可调。
-            </>
-          ) : p.muted ? (
-            <>
-              {active && (
-                <>
-                  角色<b>「{active.name}」</b>：{active.note}
-                  {" · "}
-                </>
-              )}
-              耳返<b>静音中</b> —— 打开后才能边唱边听到。
-            </>
-          ) : (
-            <>
-              耳返已开启，<b>务必戴耳机</b> —— 外放会让麦克风拾到自己的输出，形成啸叫回路。
-            </>
-          )}
-        </p>
       </div>
     </div>
   );
