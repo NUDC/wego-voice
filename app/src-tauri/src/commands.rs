@@ -261,6 +261,62 @@ pub fn reveal_recordings(app: tauri::AppHandle) -> Result<String, String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
+// ─────────────────────── 离线处理 ───────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineStatus {
+    pub running: bool,
+    /// 0~1。
+    pub progress: f32,
+    /// 阶段中文名，直接显示。
+    pub stage: String,
+    pub output: Option<String>,
+    pub error: Option<String>,
+    /// 音高轨后处理修了多少 —— 让"离线到底多做了什么"看得见。
+    pub octave_fixes: u32,
+    pub gap_fills: u32,
+}
+
+/// 启动离线重新校准。守卫在 `AppState::start_offline`（见那里的说明）。
+#[tauri::command]
+pub fn offline_start(
+    state: State<AppState>,
+    input: String,
+    character: Character,
+) -> Result<(), String> {
+    let key = parse_key(&character.key)
+        .ok_or_else(|| format!("无法解析调名：{}", character.key))?;
+    let cfg = voice_core::RecorrectConfig {
+        key,
+        retune_ms: character.retune_ms.clamp(0.0, 500.0),
+        intent_ms: 150.0,
+        pitch_shift: character.pitch_shift,
+        formant_shift: character.formant_shift,
+    };
+
+    state.start_offline(std::path::PathBuf::from(input), cfg)
+}
+
+#[tauri::command]
+pub fn offline_status(state: State<AppState>) -> OfflineStatus {
+    let j = state.job();
+    OfflineStatus {
+        running: j.is_running(),
+        progress: j.progress(),
+        stage: j.stage().label().to_string(),
+        output: j.output().map(|p| p.to_string_lossy().into_owned()),
+        error: j.error(),
+        octave_fixes: j.octave_fixes(),
+        gap_fills: j.gap_fills(),
+    }
+}
+
+#[tauri::command]
+pub fn offline_cancel(state: State<AppState>) {
+    state.job().cancel();
+}
+
 // ────────────────────── 参考音频 → 角色 ──────────────────────
 
 #[derive(Debug, Clone, Serialize)]

@@ -16,6 +16,7 @@
 pub mod backend;
 pub mod duplex;
 pub mod engine;
+pub mod job;
 pub mod latency;
 pub mod metrics;
 pub mod params;
@@ -25,6 +26,7 @@ pub mod wav;
 
 pub use backend::{BackendConfig, BackendInfo, BackendKind};
 pub use engine::{list_devices, AudioEngine, DeviceList, EngineConfig};
+pub use job::{JobState, Stage};
 pub use latency::{ImpulseProbe, LatencyStats};
 pub use metrics::{Metrics, MetricsSnapshot};
 pub use params::{parse_key, Params};

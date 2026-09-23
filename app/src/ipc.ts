@@ -215,6 +215,25 @@ export interface TimbreSuggestion {
   warning: string;
 }
 
+/**
+ * 离线处理状态。
+ *
+ * ⚠️ 引擎在跑时**不允许**启动离线任务 —— 离线处理满载单核，
+ * 而实时链路每 3ms 就要交一次货，同时跑必然爆音（架构红线 3）。
+ * 后端会直接拒绝并给出人话，UI 要提前把按钮禁掉而不是等报错。
+ */
+export interface OfflineStatus {
+  running: boolean;
+  /** 0~1。 */
+  progress: number;
+  stage: string;
+  output: string | null;
+  error: string | null;
+  /** 音高轨后处理修了多少 —— 让"离线多做了什么"看得见。 */
+  octaveFixes: number;
+  gapFills: number;
+}
+
 export interface CharacterStore {
   characters: Character[];
   activeId: string;
@@ -238,6 +257,11 @@ export const api = {
   revealRecordings: () => invoke<string>("reveal_recordings"),
 
   listRecordings: () => invoke<TakeInfo[]>("list_recordings"),
+
+  offlineStart: (input: string, character: Character) =>
+    invoke<void>("offline_start", { input, character }),
+  offlineStatus: () => invoke<OfflineStatus>("offline_status"),
+  offlineCancel: () => invoke<void>("offline_cancel"),
   suggestCharacter: (referencePath: string, sourcePath: string) =>
     invoke<TimbreSuggestion>("suggest_character", { referencePath, sourcePath }),
 

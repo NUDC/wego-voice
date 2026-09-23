@@ -14,7 +14,7 @@ import { Segmented } from "./ui";
 
 const win = getCurrentWindow();
 
-export type View = "tuner" | "cast" | "diag";
+export type View = "tuner" | "cast" | "offline" | "diag";
 
 export function TitleBar({
   view,
@@ -62,6 +62,7 @@ export function TitleBar({
           options={[
             { value: "tuner", label: "调音" },
             { value: "cast", label: "角色" },
+            { value: "offline", label: "处理" },
             { value: "diag", label: "诊断" },
           ]}
         />

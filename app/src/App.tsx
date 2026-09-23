@@ -18,6 +18,7 @@ import {
 import { TitleBar, type View } from "./components/TitleBar";
 import { TunerView } from "./components/TunerView";
 import { CastView } from "./components/CastView";
+import { OfflineView } from "./components/OfflineView";
 import { DiagnosticsView } from "./components/DiagnosticsView";
 
 const EMPTY_TICK: Tick = {
@@ -376,6 +377,14 @@ export default function App() {
             onResetBuiltin={resetBuiltin}
             running={running}
             saveError={castError}
+          />
+        )}
+
+        {view === "offline" && (
+          <OfflineView
+            running={running}
+            characters={characters}
+            activeId={activeId}
           />
         )}
 

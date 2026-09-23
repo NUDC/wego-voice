@@ -46,6 +46,8 @@ pub struct AppState {
     engine: Mutex<Option<AudioEngine>>,
     /// 引擎启停时同步更新的共享句柄，让推送线程无锁读取。
     shared: Mutex<Option<Shared>>,
+    /// 离线任务状态。**不跟引擎走** —— 它恰恰只在引擎停止时才能跑。
+    job: Arc<voice_audio::JobState>,
 }
 
 #[derive(Clone)]
@@ -59,6 +61,35 @@ struct Shared {
 }
 
 impl AppState {
+    /// 离线任务状态。
+    ///
+    /// **不放进 `shared`**：那个跟着引擎的生命周期走，而离线任务恰恰
+    /// 只在引擎停止时才能跑（架构红线 3）—— 放进去就永远取不到了。
+    pub fn job(&self) -> std::sync::Arc<voice_audio::JobState> {
+        self.job.clone()
+    }
+
+    /// 启动离线重新校准。
+    ///
+    /// ⚠️ **引擎在跑时直接拒绝**（架构红线 3：推理绝不与实时音频线程抢 CPU）。
+    /// 离线处理满载单核，而实时链路每 3 ms 就要交一次货 ——
+    /// 同时跑必然 xrun，而失败形式是用户耳朵里的爆音。
+    ///
+    /// 不用"降低线程优先级"糊弄：优先级只降低概率，不消除冲突。
+    ///
+    /// 这个守卫放在 `AppState` 而不是 command 里，是为了让 `--selftest`
+    /// 能走**同一条代码**验证它 —— 命令层要靠 WebView 才跑得起来，验不了。
+    pub fn start_offline(
+        &self,
+        input: std::path::PathBuf,
+        cfg: voice_core::RecorrectConfig,
+    ) -> Result<(), String> {
+        if self.is_running() {
+            return Err("离线处理会占满一个核，和实时引擎抢 CPU 会导致爆音。请先在「调音」页停止引擎。".into());
+        }
+        voice_audio::job::start_recorrect(self.job(), input, cfg)
+    }
+
     pub fn start(&self, cfg: EngineConfig) -> anyhow::Result<BackendInfo> {
         // 先停掉旧的：独占模式下设备被自己占着会导致新引擎起不来
         self.stop();

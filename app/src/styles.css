@@ -1438,3 +1438,64 @@ input[type="range"]:active::-webkit-slider-thumb {
   font-size: var(--t-micro);
   color: var(--fg-3);
 }
+
+/* ════════════ 离线处理 ════════════ */
+.offline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  max-width: 760px;
+}
+
+.offline-act {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+
+.offline-est {
+  font-size: var(--t-micro);
+  color: var(--fg-3);
+}
+
+.offline-bar {
+  margin-top: var(--s3);
+}
+
+.offline-bar-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--t-label);
+  color: var(--fg-2);
+  margin-bottom: 6px;
+}
+
+.offline-track {
+  height: 6px;
+  background: var(--bg-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.offline-track span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s linear;
+}
+
+.offline-done {
+  margin-top: var(--s3);
+  padding: var(--s3);
+  background: var(--bg-2);
+  border-left: 2px solid var(--good);
+  border-radius: var(--radius-sm);
+}
+
+.offline-file {
+  margin: 0 0 var(--s2);
+  font-size: var(--t-body);
+  color: var(--fg);
+  word-break: break-all;
+}

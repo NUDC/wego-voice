@@ -4,6 +4,7 @@
 
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use clap::Parser;
 use voice_audio::{thresholds, AudioEngine, EngineConfig};
 
@@ -165,11 +166,56 @@ fn run_selftest(cli: &Cli) -> anyhow::Result<()> {
     }
     println!("序列化       {} 字节，关键字段齐全 ✓", json.len());
 
-    // 6. 停止后必须干净退出
+    // 6. 架构红线 3：引擎在跑时，离线任务必须被拒绝
+    //
+    // 这一条是用**同一条代码**验的（`AppState::start_offline`），
+    // 不是重写一遍判断 —— 否则验的是测试里那份，不是产品里那份。
+    let tmp = std::env::temp_dir().join("wego-selftest-offline.wav");
+    {
+        use std::f32::consts::TAU;
+        let x: Vec<f32> = (0..48_000)
+            .map(|i| (TAU * 220.0 * i as f32 / 48_000.0).sin() * 0.4)
+            .collect();
+        voice_audio::wav::write(&tmp, &x, 48_000)?;
+    }
+    let refused = state.start_offline(tmp.clone(), Default::default());
+    anyhow::ensure!(
+        refused.is_err(),
+        "引擎在跑时离线任务竟然被放行了 —— 这会直接导致爆音（红线 3）"
+    );
+    println!("红线 3       引擎运行时拒绝离线任务 ✓");
+
+    // 7. 停止后必须干净退出
     state.stop();
     let after = state.tick();
     anyhow::ensure!(!after.running, "停止后 running 应为 false");
     println!("停止         running=false ✓");
+
+    // 8. 停止之后，同一条调用必须放行并真的跑完
+    state
+        .start_offline(tmp.clone(), Default::default())
+        .map_err(|e| anyhow::anyhow!("引擎已停止却仍拒绝离线任务：{e}"))?;
+    let job = state.job();
+    let t0 = Instant::now();
+    while job.is_running() {
+        anyhow::ensure!(t0.elapsed().as_secs() < 60, "离线任务超时");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    anyhow::ensure!(
+        job.stage() == voice_audio::Stage::Done,
+        "离线任务未完成：{:?} / {:?}",
+        job.stage(),
+        job.error()
+    );
+    let out = job.output().context("离线任务没有产出路径")?;
+    anyhow::ensure!(out.exists(), "产物文件不存在：{}", out.display());
+    println!(
+        "离线处理     {} → {} ✓",
+        tmp.file_name().unwrap_or_default().to_string_lossy(),
+        out.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_file(&out);
 
     println!("\n✅ 自检通过");
     Ok(())
