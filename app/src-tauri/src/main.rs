@@ -170,7 +170,12 @@ fn run_selftest(cli: &Cli) -> anyhow::Result<()> {
     //
     // 这一条是用**同一条代码**验的（`AppState::start_offline`），
     // 不是重写一遍判断 —— 否则验的是测试里那份，不是产品里那份。
-    let tmp = std::env::temp_dir().join("wego-selftest-offline.wav");
+    // 单独开一个目录：第 9 步要拿它当"录音目录"扫一遍，
+    // 直接用系统 temp 会把别人的 wav 也扫进来。
+    let takes_dir = std::env::temp_dir().join("wego-selftest-takes");
+    let _ = std::fs::remove_dir_all(&takes_dir);
+    std::fs::create_dir_all(&takes_dir)?;
+    let tmp = takes_dir.join("wego-selftest-offline.wav");
     {
         use std::f32::consts::TAU;
         let x: Vec<f32> = (0..48_000)
@@ -214,8 +219,43 @@ fn run_selftest(cli: &Cli) -> anyhow::Result<()> {
         tmp.file_name().unwrap_or_default().to_string_lossy(),
         out.file_name().unwrap_or_default().to_string_lossy()
     );
-    let _ = std::fs::remove_file(&tmp);
-    let _ = std::fs::remove_file(&out);
+    // 9. 录音页看到的东西：产物必须**挂在**干声下面，改名要一起改
+    //
+    // 这是跨模块的约定 —— `job::output_path` 决定产物叫什么，
+    // `takes::scan` 按名字把它配回去。两边各自的单测都过，
+    // 合起来仍可能对不上，所以在真实产物上再验一次。
+    let listed = voice_audio::takes::scan(&takes_dir);
+    anyhow::ensure!(
+        listed.len() == 1,
+        "录音目录应当只列出 1 条（校准版挂在它下面），实际 {} 条：{:?}",
+        listed.len(),
+        listed.iter().map(|t| &t.name).collect::<Vec<_>>()
+    );
+    anyhow::ensure!(
+        listed[0].corrected.as_deref() == Some(out.as_path()),
+        "校准版没有配到干声下面：{:?}",
+        listed[0].corrected
+    );
+    println!("录音列表     1 条干声 + 挂在它下面的校准版 ✓");
+
+    let renamed = voice_audio::takes::rename(&takes_dir, &tmp, "自检改名")?;
+    let after_rename = voice_audio::takes::scan(&takes_dir);
+    anyhow::ensure!(
+        after_rename.len() == 1 && after_rename[0].corrected.is_some(),
+        "改名之后配对关系断了：{:?}",
+        after_rename
+            .iter()
+            .map(|t| (&t.name, &t.corrected))
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "改名         {} ✓（校准版跟着改）",
+        renamed.file_name().unwrap_or_default().to_string_lossy()
+    );
+
+    // 清理走 remove_dir_all 而不是 takes::delete —— 后者进回收站，
+    // 一次自检往用户的回收站里塞两个文件是没道理的。
+    let _ = std::fs::remove_dir_all(&takes_dir);
 
     println!("\n✅ 自检通过");
     Ok(())

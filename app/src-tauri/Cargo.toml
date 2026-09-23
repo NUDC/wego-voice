@@ -20,7 +20,10 @@ voice-audio.workspace = true
 voice-core.workspace = true
 # tray-icon：系统托盘。它在这个产品里不是装饰 ——
 # 独占模式会占着声卡，托盘是让这件事一直可见的唯一办法（见 src/tray.rs）。
-tauri = { version = "2", features = ["tray-icon"] }
+# protocol-asset：录音页要在窗口里直接播放录音（`convertFileSrc`）。
+# 作用域锁死在 `$AUDIO/wego-voice/*`，见 tauri.conf.json —— 开这个特性
+# 等于把本地文件暴露给 WebView，范围必须限死在我们自己写出去的那个目录。
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
 clap.workspace = true
 log.workspace = true
 env_logger.workspace = true

@@ -33,18 +33,37 @@ impl Audio {
     }
 }
 
-/// 允许读入的最大时长。
+/// 参考音频允许读入的最大时长。
 ///
 /// 参考音频用不着几十分钟，而误拖一个大文件进来会直接吃光内存。
 /// 超长的只取前面这一段 —— 声线是稳定属性，不需要整首。
+///
+/// ⚠️ **这个上限只适用于参考音频**。用户自己的录音必须整条读
+/// （见 `read`），否则超过两分钟的歌会被悄悄砍掉后半段。
 pub const MAX_SECS: f32 = 120.0;
 
-/// 读一个 WAV 文件。
+/// 读一个 WAV 文件，**不截断**。
+///
+/// 用户自己的录音走这条：一首歌五分钟很正常，
+/// 截断的后果是离线处理产出的文件比原录音短一截 ——
+/// 而且是**静默**发生的，用户只会以为软件坏了。
 pub fn read(path: impl AsRef<Path>) -> Result<Audio> {
+    read_limited(path, None)
+}
+
+/// 读一个 WAV 文件，最多 `max_secs` 秒。
+///
+/// 外来素材（用户拖进来的参考音频）走这条：那是我们无法预期大小的输入，
+/// 而截断对"算声线"这件事没有损害。
+pub fn read_capped(path: impl AsRef<Path>, max_secs: f32) -> Result<Audio> {
+    read_limited(path, Some(max_secs))
+}
+
+fn read_limited(path: impl AsRef<Path>, max_secs: Option<f32>) -> Result<Audio> {
     let path = path.as_ref();
     let bytes = std::fs::read(path)
         .with_context(|| format!("读取失败：{}", path.display()))?;
-    parse(&bytes).with_context(|| format!("解析失败：{}", path.display()))
+    parse_limited(&bytes, max_secs).with_context(|| format!("解析失败：{}", path.display()))
 }
 
 fn u16le(b: &[u8], at: usize) -> u16 {
@@ -102,6 +121,11 @@ pub fn probe(path: impl AsRef<Path>) -> Result<(u32, f32)> {
 /// 之间夹着 `LIST`、`fact`、`bext` 等 chunk（DAW 导出的尤其如此），
 /// 写死 44 字节偏移的读法会在这些文件上读出噪声。
 pub fn parse(b: &[u8]) -> Result<Audio> {
+    parse_limited(b, None)
+}
+
+/// 解析 WAV 字节流，最多收下 `max_secs` 秒。`None` = 整条收下。
+pub fn parse_limited(b: &[u8], max_secs: Option<f32>) -> Result<Audio> {
     if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
         bail!("不是 WAV 文件（RIFF/WAVE 头不匹配）");
     }
@@ -164,9 +188,8 @@ pub fn parse(b: &[u8]) -> Result<Audio> {
 
     let frame_bytes = bytes_per * channels as usize;
     let mut frames = len / frame_bytes.max(1);
-    let max_frames = (MAX_SECS * rate as f32) as usize;
-    if frames > max_frames {
-        frames = max_frames;
+    if let Some(cap) = max_secs {
+        frames = frames.min((cap * rate as f32) as usize);
     }
 
     let mut out = Vec::with_capacity(frames);
@@ -335,15 +358,31 @@ mod tests {
         assert!(e.to_string().contains("不支持"));
     }
 
-    /// 超长文件只取前面一段，避免误拖一个大文件把内存吃光。
+    /// 给了上限就只取前面一段，避免误拖一个大文件把内存吃光。
     #[test]
-    fn caps_overlong_input() {
+    fn caps_overlong_input_when_asked() {
+        let rate = 8_000u32;
+        let frames = (MAX_SECS * rate as f32) as usize + 5_000;
+        let data: Vec<u8> = (0..frames).flat_map(|_| 0.1f32.to_le_bytes()).collect();
+        let a = parse_limited(&build(3, 32, 1, rate, &data, &[]), Some(MAX_SECS)).unwrap();
+        assert_eq!(a.samples.len(), (MAX_SECS * rate as f32) as usize);
+        assert!((a.duration_secs() - MAX_SECS).abs() < 0.01);
+    }
+
+    /// ⚠️ 回归测试：**默认不截断**。
+    ///
+    /// 这个上限原本是给"用户拖进来的参考音频"设的，但 `job.rs` 也用同一个
+    /// `read` 读用户自己的录音 —— 于是超过两分钟的歌被悄悄砍掉后半段，
+    /// 离线产物比原录音短一截，而且没有任何提示。
+    ///
+    /// 一首歌五分钟很正常。默认不截断，要截断的地方自己说。
+    #[test]
+    fn does_not_cap_by_default() {
         let rate = 8_000u32;
         let frames = (MAX_SECS * rate as f32) as usize + 5_000;
         let data: Vec<u8> = (0..frames).flat_map(|_| 0.1f32.to_le_bytes()).collect();
         let a = parse(&build(3, 32, 1, rate, &data, &[])).unwrap();
-        assert_eq!(a.samples.len(), (MAX_SECS * rate as f32) as usize);
-        assert!((a.duration_secs() - MAX_SECS).abs() < 0.01);
+        assert_eq!(a.samples.len(), frames, "默认读入被截断了");
     }
 }
 

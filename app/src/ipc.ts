@@ -183,11 +183,23 @@ export interface RecordingStatus {
   path: string | null;
 }
 
-/** 录音目录里的一条 take。 */
+/**
+ * 录音目录里的一条 take。
+ *
+ * 离线校准的产物（`<原名>-corrected.wav`）**挂在干声下面**，
+ * 不占列表的一行 —— 它们是同一次演唱的两个版本，
+ * 平铺会让列表在几次处理之后失去意义。
+ */
 export interface TakeInfo {
   name: string;
   path: string;
   seconds: number;
+  bytes: number;
+  /** 修改时间，UNIX 秒。时区归前端管。 */
+  modified: number;
+  correctedPath: string | null;
+  correctedSeconds: number;
+  correctedBytes: number;
 }
 
 /**
@@ -257,6 +269,18 @@ export const api = {
   revealRecordings: () => invoke<string>("reveal_recordings"),
 
   listRecordings: () => invoke<TakeInfo[]>("list_recordings"),
+  /** 录音目录的绝对路径 —— 界面上要能回答"文件到底存哪了"。 */
+  recordingsRoot: () => invoke<string>("recordings_root"),
+  /** 改名。配套的校准版跟着改，否则配对关系就断了。返回新路径。 */
+  renameRecording: (path: string, newName: string) =>
+    invoke<string>("rename_recording", { path, newName }),
+  /** 删除 —— Rust 侧走的是**回收站**，不是直接抹掉。 */
+  deleteRecording: (path: string, withCorrected: boolean) =>
+    invoke<void>("delete_recording", { path, withCorrected }),
+  /** 在资源管理器里选中这个文件。 */
+  revealFile: (path: string) => invoke<void>("reveal_file", { path }),
+  /** 用系统默认播放器打开 —— 应用内播放失手时的出路。 */
+  openFile: (path: string) => invoke<void>("open_file", { path }),
 
   offlineStart: (input: string, character: Character) =>
     invoke<void>("offline_start", { input, character }),

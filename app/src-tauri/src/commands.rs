@@ -319,12 +319,37 @@ pub fn offline_cancel(state: State<AppState>) {
 
 // ────────────────────── 参考音频 → 角色 ──────────────────────
 
+/// 录音目录里的一条 take。
+///
+/// 离线校准的产物挂在对应干声下面（`corrected*` 几个字段），
+/// 不占列表的一行 —— 它们是同一次演唱的两个版本。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TakeInfo {
     pub name: String,
     pub path: String,
     pub seconds: f32,
+    pub bytes: u64,
+    /// 修改时间，UNIX 秒。前端自己格式化 —— 时区归它管。
+    pub modified: u64,
+    pub corrected_path: Option<String>,
+    pub corrected_seconds: f32,
+    pub corrected_bytes: u64,
+}
+
+impl From<voice_audio::Take> for TakeInfo {
+    fn from(t: voice_audio::Take) -> Self {
+        Self {
+            name: t.name,
+            path: t.path.to_string_lossy().into_owned(),
+            seconds: t.seconds,
+            bytes: t.bytes,
+            modified: t.modified,
+            corrected_path: t.corrected.map(|p| p.to_string_lossy().into_owned()),
+            corrected_seconds: t.corrected_seconds,
+            corrected_bytes: t.corrected_bytes,
+        }
+    }
 }
 
 /// 列出录音目录里的所有 take，新的在前。
@@ -333,29 +358,91 @@ pub fn list_recordings(app: tauri::AppHandle) -> Vec<TakeInfo> {
     let Ok(dir) = recordings_dir(&app) else {
         return Vec::new();
     };
-    let Ok(rd) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<(std::time::SystemTime, TakeInfo)> = Vec::new();
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.extension().and_then(|s| s.to_str()) != Some("wav") {
-            continue;
-        }
-        // 只读文件头拿时长 —— 列目录不该把每个文件都读进内存
-        let secs = voice_audio::wav::probe(&p).map(|(_, s)| s).unwrap_or(0.0);
-        let modified = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
-        out.push((
-            modified,
-            TakeInfo {
-                name: p.file_name().unwrap_or_default().to_string_lossy().into_owned(),
-                path: p.to_string_lossy().into_owned(),
-                seconds: secs,
-            },
-        ));
+    voice_audio::takes::scan(&dir)
+        .into_iter()
+        .map(TakeInfo::from)
+        .collect()
+}
+
+/// 录音目录的绝对路径。界面上要显示"文件到底存哪了"。
+#[tauri::command]
+pub fn recordings_root(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(recordings_dir(&app)?.to_string_lossy().into_owned())
+}
+
+/// 给一条录音改名。配套的校准版跟着改。
+///
+/// ⚠️ 路径来自前端，**必须**过 `takes::within` 这道闸 ——
+/// 那里会规范化并确认它真的落在录音目录里。
+#[tauri::command]
+pub fn rename_recording(
+    app: tauri::AppHandle,
+    path: String,
+    new_name: String,
+) -> Result<String, String> {
+    let dir = recordings_dir(&app)?;
+    voice_audio::takes::rename(&dir, std::path::Path::new(&path), &new_name)
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| e.to_string())
+}
+
+/// 删除一条录音 —— **移进回收站**，不是直接抹掉。
+///
+/// 录音是用户唱出来的，删错了没有任何办法找回来。
+#[tauri::command]
+pub fn delete_recording(
+    app: tauri::AppHandle,
+    path: String,
+    with_corrected: bool,
+) -> Result<(), String> {
+    let dir = recordings_dir(&app)?;
+    voice_audio::takes::delete(&dir, std::path::Path::new(&path), with_corrected)
+        .map_err(|e| e.to_string())
+}
+
+/// 在资源管理器里选中某个文件。
+///
+/// 和 `reveal_recordings`（只打开目录）的区别：录音多了之后，
+/// 打开目录还得自己找一遍。
+#[tauri::command]
+pub fn reveal_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let dir = recordings_dir(&app)?;
+    let p = voice_audio::takes::within(&dir, std::path::Path::new(&path))
+        .map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        // `/select,` 后面**不能有空格**，否则 explorer 会把它当成
+        // "打开一个叫这个名字的目录"，结果是弹出文档库。
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", p.display()))
+            .spawn()
+            .map_err(|e| format!("打开资源管理器失败：{e}"))?;
     }
-    out.sort_by(|a, b| b.0.cmp(&a.0));
-    out.into_iter().map(|(_, t)| t).collect()
+    #[cfg(not(windows))]
+    let _ = p;
+    Ok(())
+}
+
+/// 用系统默认播放器打开一个录音。
+///
+/// 应用内播放用的是 WebView 的 `<audio>`，而它有两种失手的可能：
+/// 解码不了 32-bit float WAV，或者引擎正独占声卡。
+/// 这条是那时候的出路 —— 界面上只在出错后才露出来。
+#[tauri::command]
+pub fn open_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let dir = recordings_dir(&app)?;
+    let p = voice_audio::takes::within(&dir, std::path::Path::new(&path))
+        .map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(&p)
+            .spawn()
+            .map_err(|e| format!("打开失败：{e}"))?;
+    }
+    #[cfg(not(windows))]
+    let _ = p;
+    Ok(())
 }
 
 /// 参考音频分析结果。
@@ -394,8 +481,12 @@ pub fn suggest_character(
     reference_path: String,
     source_path: String,
 ) -> Result<TimbreSuggestion, String> {
-    let refr = voice_audio::wav::read(&reference_path).map_err(|e| e.to_string())?;
-    let src = voice_audio::wav::read(&source_path).map_err(|e| e.to_string())?;
+    // 这里刻意截断：参考音频是用户随手拖进来的，大小不可预期，
+    // 而声线是稳定属性 —— 算两分钟和算整首得到的结论一样。
+    // （用户自己的录音走的是不截断的 `wav::read`，见 wav.rs 的说明。）
+    let cap = voice_audio::wav::MAX_SECS;
+    let refr = voice_audio::wav::read_capped(&reference_path, cap).map_err(|e| e.to_string())?;
+    let src = voice_audio::wav::read_capped(&source_path, cap).map_err(|e| e.to_string())?;
 
     let a = voice_core::analyze_timbre(&src.samples, src.sample_rate as f32);
     let b = voice_core::analyze_timbre(&refr.samples, refr.sample_rate as f32);

@@ -1499,3 +1499,294 @@ input[type="range"]:active::-webkit-slider-thumb {
   color: var(--fg);
   word-break: break-all;
 }
+
+/* ════════════ 调音页的录音条 ════════════ */
+
+/* 录音是这个应用唯一会留下东西的动作，给它一整条而不是动作列里一个小按钮。
+   每个槽位常驻：计时器空闲时是 00:00，丢帧为 0 时也占位 ——
+   出现/消失会让这一行高度跳变，把整个控制台顶动。 */
+.rec-strip {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s3);
+  padding: var(--s2) var(--s3);
+  background: var(--bg-2);
+  border: 1px solid var(--stroke-soft);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+
+.rec-strip.on {
+  border-color: #4a2b32;
+  background: rgba(240, 90, 90, 0.07);
+}
+
+.rec-strip .btn.rec {
+  height: 30px;
+  flex: 0 0 auto;
+}
+
+.rec-time {
+  font-size: var(--t-lead);
+  color: var(--fg-2);
+  flex: 0 0 auto;
+}
+
+.rec-strip.on .rec-time {
+  color: #f0a29c;
+}
+
+/* 说明占据弹性空间，窄窗口时先挤它 */
+.rec-say {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--t-micro);
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rec-say b {
+  color: var(--fg-2);
+  font-weight: 600;
+}
+
+.rec-drop {
+  flex: 0 0 auto;
+  font-size: var(--t-micro);
+  color: var(--fg-4);
+}
+
+.rec-drop.bad {
+  color: var(--alert);
+}
+
+.rec-last {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--t-micro);
+  color: var(--fg-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rec-last b {
+  color: var(--fg-2);
+  font-weight: 500;
+}
+
+/* 窄窗口时把说明收掉 —— 按钮、计时、丢帧、文件名都比它重要 */
+@media (max-width: 1100px) {
+  .rec-say {
+    display: none;
+  }
+}
+
+/* ════════════ 录音页 ════════════ */
+
+.takes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  max-width: 900px;
+}
+
+.takes-sum {
+  font-size: var(--t-label);
+  color: var(--fg-3);
+}
+
+.takes-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s5) var(--s4);
+  color: var(--fg-3);
+  font-size: var(--t-body);
+}
+
+.takes-empty p {
+  margin: 0;
+}
+
+.takes-empty b {
+  color: var(--fg-2);
+}
+
+.takes-foot {
+  margin: 0;
+}
+
+.take-list {
+  list-style: none;
+  margin: var(--s3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.take {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+}
+
+.take.open {
+  border-color: var(--stroke);
+  background: var(--bg-1);
+}
+
+.take-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  min-width: 0;
+}
+
+/* 整块文件名都可点开，而不是只有一个小三角 —— 点击目标越大越好 */
+.take-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.take-name b {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.take-caret {
+  color: var(--fg-4);
+  font-size: 10px;
+  transition: transform var(--fast);
+  flex: 0 0 auto;
+}
+
+.take-caret.on {
+  transform: rotate(90deg);
+  color: var(--accent);
+}
+
+.take-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  background: var(--bg-0);
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font: inherit;
+  padding: 0 var(--s2);
+}
+
+.take-meta {
+  flex: 0 0 auto;
+  font-size: var(--t-micro);
+  color: var(--fg-3);
+}
+
+.take-tag {
+  flex: 0 0 auto;
+  font-size: var(--t-micro);
+  color: var(--good);
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 1px 5px;
+  opacity: 0.85;
+}
+
+.take-acts {
+  display: flex;
+  gap: var(--s1);
+  flex: 0 0 auto;
+}
+
+/* 操作按钮平时压低存在感，鼠标移到这一条上才显出来 ——
+   一列排开的按钮会盖过文件名本身。 */
+.take-acts .btn {
+  opacity: 0.45;
+  transition: opacity var(--fast);
+}
+
+.take:hover .take-acts .btn,
+.take.open .take-acts .btn {
+  opacity: 1;
+}
+
+.take-body {
+  padding: 0 var(--s3) var(--s3);
+  border-top: 1px solid var(--stroke-soft);
+  margin-top: var(--s1);
+  padding-top: var(--s3);
+}
+
+.take-run {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s3);
+  margin-top: var(--s3);
+  flex-wrap: wrap;
+}
+
+.take-run .field {
+  max-width: 220px;
+}
+
+.take-est {
+  font-size: var(--t-micro);
+  color: var(--fg-3);
+  padding-bottom: 8px;
+}
+
+/* ── 可播放的一条 ── */
+.clip {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+  flex-wrap: wrap;
+}
+
+.clip-label {
+  flex: 0 0 auto;
+  min-width: 48px;
+  font-size: var(--t-label);
+  color: var(--fg-2);
+}
+
+.clip-audio {
+  flex: 1 1 260px;
+  height: 32px;
+  min-width: 0;
+  /* WebView 自带的播放器是浅色的，压暗一点才不至于在深色面板里刺眼 */
+  filter: invert(0.88) hue-rotate(180deg);
+}
+
+.clip-fail {
+  flex: 1 1 260px;
+  font-size: var(--t-micro);
+  color: var(--caution);
+}
+
+.clip-note {
+  font-size: var(--t-micro);
+  color: var(--fg-3);
+}

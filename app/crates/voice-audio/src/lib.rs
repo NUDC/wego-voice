@@ -22,6 +22,7 @@ pub mod metrics;
 pub mod params;
 pub mod priority;
 pub mod recorder;
+pub mod takes;
 pub mod wav;
 
 pub use backend::{BackendConfig, BackendInfo, BackendKind};
@@ -31,6 +32,7 @@ pub use latency::{ImpulseProbe, LatencyStats};
 pub use metrics::{Metrics, MetricsSnapshot};
 pub use params::{parse_key, Params};
 pub use recorder::{timestamped_name, Recorder, RecorderSink, RecorderState};
+pub use takes::Take;
 pub use wav::Audio;
 
 /// 录音器的共享槽位。

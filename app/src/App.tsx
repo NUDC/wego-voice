@@ -18,7 +18,7 @@ import {
 import { TitleBar, type View } from "./components/TitleBar";
 import { TunerView } from "./components/TunerView";
 import { CastView } from "./components/CastView";
-import { OfflineView } from "./components/OfflineView";
+import { TakesView } from "./components/TakesView";
 import { DiagnosticsView } from "./components/DiagnosticsView";
 
 const EMPTY_TICK: Tick = {
@@ -154,10 +154,6 @@ export default function App() {
       setError(String(e));
     }
   }, [rec.recording]);
-
-  const revealRecordings = useCallback(() => {
-    api.revealRecordings().catch((e) => setError(String(e)));
-  }, []);
 
   // 角色变化 → 立刻下发。
   //
@@ -359,7 +355,7 @@ export default function App() {
             onManage={() => setView("cast")}
             rec={rec}
             onRecord={toggleRecord}
-            onReveal={revealRecordings}
+            onTakes={() => setView("takes")}
             onStart={start}
             onStop={stop}
           />
@@ -380,11 +376,12 @@ export default function App() {
           />
         )}
 
-        {view === "offline" && (
-          <OfflineView
+        {view === "takes" && (
+          <TakesView
             running={running}
             characters={characters}
             activeId={activeId}
+            onGoTune={() => setView("tuner")}
           />
         )}
 

@@ -431,8 +431,10 @@ fn recorrect_file(audio: &AudioOpts, input: &str, output: &str) -> Result<()> {
 fn timbre_report(reference: &str, source: &str) -> Result<()> {
     use voice_audio::wav;
 
-    let r = wav::read(reference)?;
-    let s = wav::read(source)?;
+    // 与 `suggest_character` 保持一致：参考素材截到两分钟。
+    // 两边算法一样但读入不一样的话，bench 的结论就不能用来解释应用的行为。
+    let r = wav::read_capped(reference, wav::MAX_SECS)?;
+    let s = wav::read_capped(source, wav::MAX_SECS)?;
 
     let a = voice_core::analyze_timbre(&s.samples, s.sample_rate as f32);
     let b = voice_core::analyze_timbre(&r.samples, r.sample_rate as f32);

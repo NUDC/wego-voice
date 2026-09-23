@@ -56,7 +56,8 @@ export interface TunerProps {
   /** 录音。录的是干声 —— 见 ipc.ts 的 RecordingStatus 说明。 */
   rec: RecordingStatus;
   onRecord: () => void;
-  onReveal: () => void;
+  /** 跳到录音页。录完之后"它去哪了"必须有一个当场能点的答案。 */
+  onTakes: () => void;
 
   onStart: () => void;
   onStop: () => void;
@@ -189,22 +190,6 @@ export function TunerView(p: TunerProps) {
 
         {/* 动作列：跨两行，位置固定。 */}
         <div className="console-act">
-          {/* 录音是通往「录完再换声线」那条路的入口，
-              所以它必须在主界面上，不能藏进诊断页。 */}
-          <button
-            className={`btn rec ${p.rec.recording ? "on" : ""}`}
-            onClick={p.onRecord}
-            disabled={!p.running || p.busy}
-            title={
-              p.rec.recording
-                ? "停止并保存"
-                : "录制干声 —— 声线转换与离线校准都用它"
-            }
-          >
-            <span className="rec-dot" />
-            {p.rec.recording ? mmss(p.rec.seconds) : "录制"}
-          </button>
-
           <button
             className={`btn mon ${p.muted ? "" : "hot"}`}
             onClick={() => p.onMuted(!p.muted)}
@@ -227,30 +212,75 @@ export function TunerView(p: TunerProps) {
           </button>
         </div>
 
+        {/* ── 录音条 ──
+
+            录音是通往「录完再换声线」那条路的入口，也是这个应用唯一会
+            留下东西的动作 —— 它需要一块自己的地方，而不是动作列里一个
+            和「耳返」并排的小按钮。
+
+            每个槽位**常驻**：计时器空闲时显示 00:00、丢帧计数为 0 时也占位。
+            出现/消失会让这一行的高度跳变，进而把整个控制台顶动。 */}
+        <div className={`rec-strip ${p.rec.recording ? "on" : ""}`}>
+          <button
+            className={`btn rec ${p.rec.recording ? "on" : ""}`}
+            onClick={p.onRecord}
+            disabled={!p.running || p.busy}
+            title={
+              p.running
+                ? p.rec.recording
+                  ? "停止并保存"
+                  : "录制干声 —— 声线转换与离线校准都用它"
+                : "采集链路在引擎里，引擎没起来就没有声音可录"
+            }
+            type="button"
+          >
+            <span className="rec-dot" />
+            {p.rec.recording ? "停止并保存" : "录制"}
+          </button>
+
+          <span className="rec-time mono">{mmss(p.rec.seconds)}</span>
+
+          <span className="rec-say">
+            {!p.running ? (
+              <>录音需要先<b>启动引擎</b> —— 采集链路在引擎里。</>
+            ) : p.rec.recording ? (
+              <>
+                正在录<b>干声</b>，不是耳返里那个修正过的声音。
+              </>
+            ) : (
+              <>录<b>干声</b>：换角色重来、离线校准、将来送进声线转换，都从它出发。</>
+            )}
+          </span>
+
+          {/* 丢帧必须报出来，而且要**常驻**一个槽位：
+              拿着有断裂的素材去做后续处理，事后根本查不出原因。 */}
+          <span className={`rec-drop mono ${p.rec.dropped > 0 ? "bad" : ""}`}>
+            {p.rec.dropped > 0 ? `丢帧 ${p.rec.dropped}` : "丢帧 0"}
+          </span>
+
+          <span className="rec-last">
+            {p.rec.path ? (
+              <>
+                {p.rec.recording ? "正在写入：" : "已保存："}
+                <b title={p.rec.path}>{p.rec.path.split(/[\\/]/).pop()}</b>
+              </>
+            ) : (
+              <span className="dim">本次还没有录音</span>
+            )}
+          </span>
+
+          <button className="btn tiny" onClick={p.onTakes} type="button">
+            录音页
+          </button>
+        </div>
+
         {/* 说明行永远存在，只换内容 —— 否则出现/消失会把整个控制台顶动。
-            优先级：丢帧 > 录音中 > 已保存 > 耳返状态。 */}
-        <p
-          className={`console-note ${
-            p.rec.dropped > 0 || (p.running && !p.muted) ? "warn" : ""
-          }`}
-        >
+            录音相关的状态已经归上面那条，这里只管引擎与耳返。 */}
+        <p className={`console-note ${p.rec.dropped > 0 || (p.running && !p.muted) ? "warn" : ""}`}>
           {p.rec.dropped > 0 ? (
             <>
               ⚠️ 录音<b>丢了 {p.rec.dropped} 个样本</b> ——
               文件里会有细微断裂。多半是磁盘被占住了（杀毒扫描、同步盘）。
-              这一条必须报出来：拿着有断裂的素材去做后续处理，事后根本查不出原因。
-            </>
-          ) : p.rec.recording ? (
-            <>
-              正在录<b>干声</b>（不是耳返里那个修正过的声音）——
-              换角色重来、离线重新校准、声线转换，都要从这份原始素材出发。
-            </>
-          ) : p.rec.path ? (
-            <>
-              已保存：
-              <button className="link" onClick={p.onReveal} type="button">
-                打开录音文件夹
-              </button>
             </>
           ) : !p.running ? (
             <>
