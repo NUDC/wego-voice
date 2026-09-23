@@ -121,8 +121,17 @@ export const REQUIREMENTS = {
   ],
 };
 
-/** 仓库地址。下载与「所有版本」都从这里派生，不写死多份。 */
+/**
+ * 仓库地址。下载、「所有版本」、版本探针的 API 地址都从这里派生，不写死多份。
+ *
+ * ⚠️ `scripts/prerender.mjs` 用正则从本文件里抠这一行来拼 API 地址。
+ * 改格式（比如换成模板串）会让构建直接报错 —— 那是故意的，
+ * 总比悄悄发一个探针指着空地址的页面好。
+ */
 export const REPO = "https://github.com/NUDC/wego-voice";
+
+/** Release 列表页。没有可下载版本时，按钮退到这里，不会 404。 */
+export const RELEASES = `${REPO}/releases`;
 
 export interface Release {
   tag: string;
@@ -141,7 +150,14 @@ function humanSize(bytes: string | undefined): string {
 }
 
 /**
- * 当前发布版本。构建期由 CI 注入（见 .github/workflows/pages.yml）。
+ * 当前发布版本 —— **构建期烤进 HTML 的那一份，是兜底不是真相**。
+ *
+ * 真正的版本信息由 `scripts/release-probe.js` 在页面加载后直接问
+ * GitHub Release API 要（见那个文件的说明）。这里烤进去的值负责三件事：
+ * 首屏不闪、禁用 JS 也能下载、API 限流或挂掉时页面仍然可用。
+ *
+ * 为什么两层都要：烤进去的那份会过期（在网页上手改 Release 不会触发重新部署），
+ * 探针那份会失败（离线、限流）。两者失败的场景不重叠，叠起来才不留缺口。
  *
  * ⚠️ **`url` 为空是正常状态**，不是故障 —— 项目还没发版。
  * 页面必须如实显示「尚未发布」，而不是给一个点了会 404 的按钮。

@@ -7,8 +7,10 @@
  * 配色与应用同源（暗底、低饱和），但排版更松：落地页要能扫读，
  * 应用要信息密度。
  *
- * ⚠️ 全站**零 JavaScript**（见 src/entry-server.tsx）。
- * 任何需要状态的效果都必须用原生 HTML 或纯 CSS 实现，否则这条就破了。
+ * ⚠️ 全站**零框架 JavaScript**（见 src/entry-server.tsx）。
+ * 唯一的例外是内联的版本探针（scripts/release-probe.js），它只改
+ * 下载按钮的 href 与几处文案。任何需要状态的效果仍然必须用原生 HTML
+ * 或纯 CSS 实现，否则这条就破了。
  */
 
 :root {
@@ -37,6 +39,14 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* 浏览器自带的 [hidden]{display:none} 属于 user-agent 源，
+   **任何**作者样式都能盖掉它 —— 与选择器权重无关。
+   本站用 hidden 控制「还没发版」的块（版本探针拿到数据后摘掉），
+   而那些块恰好有 display:flex，漏掉这一条就会「明明 hidden 却照样显示」。 */
+[hidden] {
+  display: none !important;
 }
 
 html {
@@ -277,6 +287,28 @@ p strong {
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 20px;
+}
+
+/* 下载按钮底下那行元信息：平台 · 体积 · 免安装 · 发布日期。
+   没有分隔符时四个短词会被读成一句话，所以插 · 而不是只留空格。 */
+.dl-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0 0 18px;
+  font-size: 13px;
+  color: var(--faint);
+}
+
+.dl-meta > span + span::before {
+  content: "·";
+  margin-right: 10px;
+  color: var(--ghost);
+}
+
+.dl-meta .dim {
+  color: var(--ghost);
 }
 
 .fineprint {

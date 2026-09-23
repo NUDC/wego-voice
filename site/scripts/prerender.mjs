@@ -1,13 +1,17 @@
 /**
- * 构建期预渲染：把 React 渲染成静态 HTML，然后**把 JS 整个删掉**。
+ * 构建期预渲染：把 React 渲染成静态 HTML，然后**把框架 JS 整个删掉**。
  *
  * 详见 `src/entry-server.tsx` 的说明 —— 本站零交互，
  * 发 React 运行时给访客是纯浪费。
  *
+ * 唯一保留的 JS 是内联的版本探针（`scripts/release-probe.js`，~1.5 kB）：
+ * 页面上只有版本号和下载链接会自己过期，那一处值得联网问一次。
+ * 理由写在那个文件里。
+ *
  * 流程（由 package.json 的 build 串起来）：
  *   1. vite build                         → dist/（HTML + CSS + 一个用不上的 JS）
  *   2. vite build --ssr entry-server.tsx  → dist-ssr/（Node 可 import 的渲染器）
- *   3. 本脚本                              → 注入 HTML、删 JS、生成 sitemap
+ *   3. 本脚本                              → 注入 HTML、删框架 JS、内联探针、生成 sitemap
  *
  * 任何一步失败都直接抛错退出：**宁可构建红，也不要悄悄发一个空壳页面**。
  */
@@ -73,6 +77,47 @@ const preloadRe = /\s*<link\b[^>]*rel="modulepreload"[^>]*>/g;
 const removed = (html.match(scriptRe) ?? []).length;
 html = html.replace(scriptRe, "").replace(preloadRe, "");
 
+// ── 3.5 内联版本探针 ──
+//
+// 仓库地址只在 src/content.ts 里写一次，这里抠出来拼成 API 地址 ——
+// 两处各写一份迟早会分叉，而分叉的表现是"下载按钮指着别人的仓库"。
+// 抠不到就直接报错：宁可构建红，也不要发一个探针指着 `__RELEASE_API__` 的页面。
+const contentSrc = await readFile(join(root, "src", "content.ts"), "utf8");
+const repoMatch = contentSrc.match(/REPO\s*=\s*"https:\/\/github\.com\/([^"]+?)\/?"/);
+if (!repoMatch) {
+  throw new Error("src/content.ts 里找不到 REPO 常量 —— 版本探针拼不出 API 地址");
+}
+const releaseApi = `https://api.github.com/repos/${repoMatch[1]}/releases/latest`;
+
+let probe = await readFile(join(root, "scripts", "release-probe.js"), "utf8");
+if (!probe.includes("__RELEASE_API__")) {
+  throw new Error("release-probe.js 里没有 __RELEASE_API__ 占位符");
+}
+
+// 注释占了源文件三分之二（中文一个字三字节），但它们是写给改代码的人看的，
+// 不该发给访客。这里**按行**剥：只删「整行都是注释」的行，不碰行尾。
+//
+// 逐行而不是正则匹配 /* */ 与 //：正则会误伤字符串里的斜杠。
+// 而且必须在替换 __RELEASE_API__ **之前**剥 —— 真实 API 地址里的
+// `https://` 带着两个斜杠，之后再剥就把它当注释砍掉了。
+probe = probe
+  .split("\n")
+  .filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l))
+  .join("\n")
+  .replace(/\n{2,}/g, "\n")
+  .trim();
+probe = probe.replaceAll("__RELEASE_API__", releaseApi);
+
+// 剥完还得是能跑的东西。这两个记号在，说明主体没被误删。
+if (!probe.includes("fetch(") || !probe.includes("data-dl")) {
+  throw new Error("剥注释之后版本探针不成样子了 —— 检查 release-probe.js");
+}
+
+// 放在 </body> 之前而不是 <head>：探针要改 DOM，这样它跑起来时
+// 正文一定已经解析完了，不必再等 DOMContentLoaded。
+if (!html.includes("</body>")) throw new Error("index.html 里找不到 </body>");
+html = html.replace("</body>", `  <script>\n${probe}\n    </script>\n  </body>`);
+
 // ── 4. 注入依赖绝对地址的 meta ──
 const seo = [
   `<link rel="canonical" href="${SITE_URL}" />`,
@@ -117,6 +162,8 @@ const htmlSize = Buffer.byteLength(html);
 
 console.log("【预渲染】");
 console.log(`  站点地址   ${SITE_URL}`);
-console.log(`  HTML       ${kb(htmlSize)}（含全部正文）`);
+console.log(`  版本探针   ${releaseApi}`);
+console.log(`  HTML       ${kb(htmlSize)}（含全部正文与内联探针）`);
 console.log(`  CSS        ${kb(cssSize)}`);
-console.log(`  JS         0 B —— 已移除 ${kb(jsBefore)}（${removed} 个 script 标签）`);
+console.log(`  框架 JS    0 B —— 已移除 ${kb(jsBefore)}（${removed} 个 script 标签）`);
+console.log(`  内联 JS    ${kb(Buffer.byteLength(probe))}（版本探针，无框架无依赖）`);

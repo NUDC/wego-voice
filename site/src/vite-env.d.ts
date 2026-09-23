@@ -7,12 +7,12 @@
 // TS 5 对此是容忍的，所以早先缺了这个文件也没报错。
 
 /**
- * 发版信息。由 `.github/workflows/pages.yml` 在**构建期**从
+ * 发版信息的**兜底值**。由 `.github/workflows/pages.yml` 在构建期从
  * GitHub Release API 取出来注入。
  *
- * 为什么不在页面上用 JS 拉：官网刻意做成零 JavaScript（见 entry-server.tsx）。
- * 为了显示一个版本号就把 React 运行时和一次网络请求加回去，不划算 ——
- * 发版时重新部署一次就够了。
+ * 线上真正生效的是 `scripts/release-probe.js`：页面加载后直接问 API
+ * 要最新版本，然后改写下载按钮。这里烤进去的值负责首屏不闪、
+ * 禁用 JS 也能下载、以及 API 限流时不至于开天窗。
  *
  * 还没有任何 Release 时全部为空串，页面显示「尚未发布」。
  */

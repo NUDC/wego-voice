@@ -141,8 +141,11 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes-file notes.md
 
-      # Release 发出去之后刷新官网：版本号与下载链接是**构建期**烤进 HTML 的
-      # （官网零 JS，见 site/src/entry-server.tsx），不重新部署就还停在旧版本。
+      # Release 发出去之后刷新官网。
+      #
+      # 页面里的版本探针已经能自己拿到最新版，所以这一步不再是必需的 ——
+      # 但它刷新的是**禁用 JS / API 限流时的兜底值**，不跑的话那条路径
+      # 会一直停在旧版本。成本一次构建，留着。
       #
       # ⚠️ 必须**派发到 main**，不能把 pages.yml 当可复用工作流在这里调用。
       # v0.1.0 就栽在这上面：复用调用会继承 tag 的 ref，而 `github-pages`

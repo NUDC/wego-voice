@@ -3,6 +3,7 @@ import {
   FACTS,
   FEATURES,
   LATENCY_BUDGET,
+  RELEASES,
   REPO,
   REQUIREMENTS,
 } from "../content";
@@ -151,7 +152,7 @@ export function Requirements() {
         <strong>弹出「Windows 已保护你的电脑」</strong> ——
         程序未做代码签名，点「更多信息 → 仍要运行」即可。
         不放心的话{" "}
-        <a href={`${REPO}/releases`}>Release 页</a>
+        <a href={RELEASES}>Release 页</a>
         附有 SHA256，可以自己核对。
       </p>
       <p className="para">
@@ -171,7 +172,7 @@ export function Footer() {
         <span className="dim">Windows 桌面工具 · 单机运行</span>
         <span className="spacer" />
         <a href={REPO}>源码</a>
-        <a href={`${REPO}/releases`}>版本</a>
+        <a href={RELEASES}>版本</a>
       </div>
     </footer>
   );

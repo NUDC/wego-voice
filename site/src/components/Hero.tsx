@@ -1,4 +1,4 @@
-import { FACTS, LATENCY_SCALE, NAV, RELEASE, REPO } from "../content";
+import { FACTS, LATENCY_SCALE, NAV, RELEASE, RELEASES } from "../content";
 import { Tuner } from "./Tuner";
 
 export function Nav() {
@@ -17,8 +17,11 @@ export function Nav() {
           </a>
         ))}
         {/* 直链到安装包。GitHub 的 release 资产带 Content-Disposition:
-            attachment，点了就是下载，不会跳走。 */}
-        <a className="cta" href={RELEASE.url || `${REPO}/releases`}>
+            attachment，点了就是下载，不会跳走。
+
+            `data-dl` 是给版本探针认的（scripts/release-probe.js）——
+            页面加载后它会把 href 换成 API 报的最新版。这里烤的是兜底值。 */}
+        <a className="cta" data-dl href={RELEASE.url || RELEASES}>
           {RELEASE.url ? "下载" : "尚未发布"}
         </a>
       </nav>
@@ -69,8 +72,10 @@ export function Hero() {
         <div className="hero-actions">
           {/* 点了直接下载，不再跳到页面底部再点一次。
               没有发布版本时退回 Releases 页 —— 那里会如实显示"还没有"，
-              而不是给一个点了 404 的链接。 */}
-          <a className="btn primary" href={RELEASE.url || `${REPO}/releases`}>
+              而不是给一个点了 404 的链接。
+
+              `data-dl-tag` 让探针知道这个按钮的文案要带版本号。 */}
+          <a className="btn primary" data-dl data-dl-tag href={RELEASE.url || RELEASES}>
             {RELEASE.url ? `下载 ${RELEASE.tag}` : "尚未发布"}
           </a>
           <a className="btn" href="#how">
@@ -78,13 +83,19 @@ export function Hero() {
           </a>
         </div>
 
-        {RELEASE.url && (
-          <p className="dl-meta">
-            <span className="mono">{FACTS.platform}</span>
-            <span className="mono">{RELEASE.size}</span>
-            <span className="mono">免安装单文件</span>
-          </p>
-        )}
+        {/* 始终渲染、按需 hidden，而不是条件渲染：还没发版时页面里也得有
+            这些节点，探针拿到数据后才有东西可填 —— 否则「站点部署时还没发版」
+            的访客永远看不到版本信息，哪怕线上早就有了。 */}
+        <p className="dl-meta" data-dl-only hidden={!RELEASE.url}>
+          <span className="mono">{FACTS.platform}</span>
+          <span className="mono" data-dl-size>
+            {RELEASE.size}
+          </span>
+          <span className="mono">免安装单文件</span>
+          <span className="mono dim">
+            <span data-dl-date>{RELEASE.date}</span> 发布
+          </span>
+        </p>
 
         {/* 下载卡片删掉之后，两条关键告知搬到这里：
             戴耳机（否则啸叫）、首次运行会被 Windows 拦（否则以为是病毒）。
@@ -92,12 +103,10 @@ export function Hero() {
         <p className="fineprint">
           需要有线耳机或外置声卡，蓝牙做不了实时耳返（
           <a href="#require">为什么</a>）。
-          {RELEASE.url && (
-            <>
-              {" "}首次运行 Windows 会拦一下 ——{" "}
-              <a href="#require">怎么过</a>。
-            </>
-          )}
+          <span data-dl-only hidden={!RELEASE.url}>
+            {" "}首次运行 Windows 会拦一下 ——{" "}
+            <a href="#require">怎么过</a>。
+          </span>
         </p>
       </div>
 
