@@ -173,6 +173,8 @@ pub fn run(autostart: bool, f0_floor: f32) {
             commands::clone_status,
             commands::clone_start,
             commands::clone_cancel,
+            commands::clone_download,
+            commands::clone_download_cancel,
             commands::clone_reveal_models,
             commands::suggest_character,
             commands::characters_load,

@@ -33,6 +33,15 @@ pub struct Asset {
     pub bytes: u64,
     /// SHA-256，小写十六进制。
     pub sha256: &'static str,
+    /// 下载源，**按顺序试**。
+    ///
+    /// 多源不是为了快，是为了**能下到**：这台开发机直连 GitHub Release
+    /// 实测多次超时，而镜像一分钟下完 65 MB。
+    ///
+    /// 换源不构成安全风险 —— 每个文件都有固定的 SHA-256，
+    /// 校验过不了就当没下到。镜像能做的只有"下不下得来"，
+    /// 做不到"喂一个假模型进来"。
+    pub sources: &'static [&'static str],
 }
 
 impl Asset {
@@ -50,13 +59,39 @@ pub const ASSETS: &[Asset] = &[
         what: "内容编码器 —— 把唱的内容与音色拆开",
         bytes: 377_655_729,
         sha256: "b3886e7dff1495cda514f94f4680a7b1261e05d6929f5c764cdb17934b413c2a",
+        // 镜像在前、官方源在后：本产品的用户主要在国内，
+        // 直连超时的代价（几十秒）比镜像走一趟大得多。
+        sources: &[
+            "https://hf-mirror.com/NaruseMioShirakana/MoeSS-SUBModel/resolve/main/vec-768-layer-12.onnx",
+            "https://huggingface.co/NaruseMioShirakana/MoeSS-SUBModel/resolve/main/vec-768-layer-12.onnx",
+        ],
     },
     Asset {
         name: "model_0.pt",
         what: "解码器 —— 按音色重新合成波形",
         bytes: 67_878_441,
         sha256: "ebe70c92c09d7d1c1fbfe631b21766ecca6afb21536fa195b0e932dd2fe12912",
+        sources: &[
+            "https://gh-proxy.com/https://github.com/yxlllc/DDSP-SVC/releases/download/5.0/model_0.pt",
+            "https://ghfast.top/https://github.com/yxlllc/DDSP-SVC/releases/download/5.0/model_0.pt",
+            "https://github.com/yxlllc/DDSP-SVC/releases/download/5.0/model_0.pt",
+        ],
     },
+];
+
+/// 伴生程序的下载地址。
+///
+/// 它由本项目的 CI 构建并随 Release 发布，所以**不钉哈希** ——
+/// 每次发版它都会变。取而代之的校验是：下完直接跑一次 `--selftest`。
+/// 那比哈希更有意义：它验的是"这个 exe 在这台机器上真的能跑"，
+/// 而不只是"字节没错"。
+pub const COMPANION_URL: &str =
+    "https://github.com/NUDC/wego-voice/releases/latest/download/wego-clone.exe";
+
+/// 伴生程序的镜像。理由同上面的模型。
+pub const COMPANION_MIRRORS: &[&str] = &[
+    "https://gh-proxy.com/https://github.com/NUDC/wego-voice/releases/latest/download/wego-clone.exe",
+    "https://ghfast.top/https://github.com/NUDC/wego-voice/releases/latest/download/wego-clone.exe",
 ];
 
 /// 伴生程序的文件名。
@@ -298,6 +333,148 @@ pub fn status(d: &Path) -> Status {
         items,
         companion: d.join(COMPANION).is_file(),
         dir: d,
+    }
+}
+
+/// 下载进度的一次汇报。
+pub struct Step {
+    /// 正在下的文件名。
+    pub name: String,
+    /// 这个文件已经拿到多少字节。
+    pub have: u64,
+    pub total: u64,
+    /// 整批里这是第几个（从 1 数）。
+    pub index: usize,
+    pub count: usize,
+}
+
+/// 把缺的东西下齐。
+///
+/// # 每一步的失败都当成"这个源不行"，换下一个
+///
+/// 断线、超时、镜像挂了、返回 404 —— 对用户来说都是同一件事：
+/// **这条路走不通，换一条**。只有全部源都试过还不行，才算失败。
+///
+/// # 下完必须校验
+///
+/// 大小对不上或哈希对不上 → **删掉重下一次**（只重一次）。
+/// 不删的话，一个坏文件会一直卡在那里：每次"继续下载"都看到
+/// 大小已经够了，于是什么都不做，而推理永远失败。
+pub fn download_missing(
+    dir: &Path,
+    mut progress: impl FnMut(Step) -> bool,
+) -> Result<()> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("创建模型目录失败：{}", dir.display()))?;
+
+    let st = status(dir);
+    let mut todo: Vec<(String, Vec<String>, u64, Option<String>)> = Vec::new();
+    for (a, state) in &st.items {
+        if !state.usable() {
+            todo.push((
+                a.name.to_string(),
+                a.sources.iter().map(|s| s.to_string()).collect(),
+                a.bytes,
+                Some(a.sha256.to_string()),
+            ));
+        }
+    }
+    if !st.companion {
+        let mut urls = vec![COMPANION_URL.to_string()];
+        urls.extend(COMPANION_MIRRORS.iter().map(|s| s.to_string()));
+        // 伴生程序体积每次发版都不同，所以不给期望大小 —— 读到 EOF 为止
+        todo.push((COMPANION.to_string(), urls, 0, None));
+    }
+
+    let count = todo.len();
+    for (i, (name, urls, bytes, sha)) in todo.into_iter().enumerate() {
+        let dest = dir.join(&name);
+        let mut last: Option<anyhow::Error> = None;
+        let mut ok = false;
+
+        // 最多来两轮：第一轮可能续传到一个坏文件上，
+        // 校验不过就删掉从头下一次。
+        for attempt in 0..2 {
+            if attempt == 1 {
+                let _ = std::fs::remove_file(&dest);
+            }
+            let mut failed = None;
+            for url in &urls {
+                let r = crate::net::download(url, &dest, bytes, |p| {
+                    progress(Step {
+                        name: name.clone(),
+                        have: p.have,
+                        total: if bytes > 0 { bytes } else { p.total },
+                        index: i + 1,
+                        count,
+                    })
+                });
+                match r {
+                    Ok(()) => {
+                        failed = None;
+                        break;
+                    }
+                    Err(e) => {
+                        // 用户取消：立刻停，不要接着试别的源
+                        if e.to_string().contains("已取消") {
+                            return Err(e);
+                        }
+                        failed = Some(e);
+                    }
+                }
+            }
+            if let Some(e) = failed {
+                last = Some(e);
+                continue;
+            }
+            match check_file(&dest, bytes, sha.as_deref(), &mut progress, &name, i + 1, count) {
+                Ok(()) => {
+                    ok = true;
+                    break;
+                }
+                Err(e) => last = Some(e),
+            }
+        }
+        if !ok {
+            let e = last.unwrap_or_else(|| anyhow::anyhow!("未知失败"));
+            bail!("下载 {name} 失败：{e:#}");
+        }
+    }
+    Ok(())
+}
+
+/// 下完之后的校验：大小 + 哈希。
+fn check_file(
+    dest: &Path,
+    bytes: u64,
+    sha: Option<&str>,
+    progress: &mut impl FnMut(Step) -> bool,
+    name: &str,
+    index: usize,
+    count: usize,
+) -> Result<()> {
+    let got = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+    if bytes > 0 && got != bytes {
+        bail!("大小不对：拿到 {got} 字节，应当是 {bytes}");
+    }
+    if got == 0 {
+        bail!("文件是空的");
+    }
+    let Some(want) = sha else { return Ok(()) };
+    let total = got;
+    let h = sha256_file(dest, |f| {
+        progress(Step {
+            name: format!("{name}（校验中）"),
+            have: (f * total as f32) as u64,
+            total,
+            index,
+            count,
+        })
+    })?;
+    match h {
+        None => bail!("已取消"),
+        Some(h) if h == want => Ok(()),
+        Some(h) => bail!("校验不通过：算出 {h}，应当是 {want}"),
     }
 }
 
@@ -567,7 +744,7 @@ mod tests {
             std::fs::write(dir(&d).join(a.name), vec![0u8; a.bytes.min(4096) as usize]).unwrap();
         }
         // 真实体积太大，这里改用一个缩小的断言：只验逻辑分支
-        let a = Asset { name: "tiny.bin", what: "", bytes: 4, sha256: "" };
+        let a = Asset { name: "tiny.bin", what: "", bytes: 4, sha256: "", sources: &[] };
         let p = dir(&d).join(a.name);
         std::fs::write(&p, b"abcd").unwrap();
         assert_eq!(std::fs::metadata(&p).unwrap().len(), a.bytes);
@@ -706,6 +883,15 @@ mod tests {
             );
             assert!(a.bytes > 1_000_000, "{} 的体积看着不对：{}", a.name, a.bytes);
             assert!(!a.what.is_empty(), "{} 缺人话说明", a.name);
+            assert!(!a.sources.is_empty(), "{} 一个下载源都没有", a.name);
+            for u in a.sources {
+                assert!(
+                    crate::net::parse_url(u).is_ok(),
+                    "{} 的源不是合法 URL：{u}",
+                    a.name
+                );
+                assert!(u.ends_with(a.name), "{} 的源指向的文件名对不上：{u}", a.name);
+            }
         }
     }
 }

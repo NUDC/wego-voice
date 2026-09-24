@@ -671,6 +671,15 @@ pub struct CloneStatus {
     pub stage: String,
     pub output: Option<String>,
     pub error: Option<String>,
+
+    /// 下载是否在跑。**和转换任务分开** —— 下载受网络限，
+    /// 转换受 CPU 限，两者能同时进行。
+    pub downloading: bool,
+    /// 0~1，整批的进度。
+    pub download_progress: f32,
+    /// 正在下什么，人话。
+    pub download_what: String,
+    pub download_error: Option<String>,
 }
 
 /// 模型目录。
@@ -698,6 +707,7 @@ fn models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 pub fn clone_status(app: tauri::AppHandle, state: State<AppState>) -> Result<CloneStatus, String> {
     let st = voice_neural::assets::status(&models_dir(&app)?);
     let j = state.clone_job();
+    let d = state.download_job();
     Ok(CloneStatus {
         ready: st.ready(),
         missing: st.missing(),
@@ -708,7 +718,22 @@ pub fn clone_status(app: tauri::AppHandle, state: State<AppState>) -> Result<Clo
         stage: j.stage(),
         output: j.output().map(|p| p.to_string_lossy().into_owned()),
         error: j.error(),
+        downloading: d.is_running(),
+        download_progress: d.progress(),
+        download_what: d.what(),
+        download_error: d.error(),
     })
+}
+
+/// 开始下载缺的模型与推理程序。
+#[tauri::command]
+pub fn clone_download(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
+    state.start_download(models_dir(&app)?)
+}
+
+#[tauri::command]
+pub fn clone_download_cancel(state: State<AppState>) {
+    state.download_job().cancel();
 }
 
 /// 启动声线转换。守卫在 `AppState` 里，见那边的说明。

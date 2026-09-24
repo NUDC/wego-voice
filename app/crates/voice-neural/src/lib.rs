@@ -52,6 +52,9 @@
 /// 回答"装了没有"，靠的就是这个模块。
 pub mod assets;
 
+/// HTTPS 下载（WinHTTP）。走系统代理与系统证书库，体积成本为零。
+pub mod net;
+
 pub mod features;
 
 /// 最小 WAV 读写。伴生程序用，不拖 `voice-audio` 那条实时链路。

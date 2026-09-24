@@ -47,6 +47,12 @@ fn main() -> Result<()> {
             let out: PathBuf = args.get(5).context("缺少输出路径")?.into();
             convert(&enc, &dec, &src, &out)
         }
+        Some("get") => {
+            let u = args.get(2).context("用法：wego-neural get <url> <落盘路径> [期望字节数]")?;
+            let d: PathBuf = args.get(3).context("缺少落盘路径")?.into();
+            let n: u64 = args.get(4).and_then(|v| v.parse().ok()).unwrap_or(0);
+            get(u, &d, n)
+        }
         #[cfg(feature = "candle")]
         Some("check") => {
             let p: PathBuf = args.get(2).context("用法：wego-neural check <检查点.pt>")?.into();
@@ -476,4 +482,30 @@ fn write_wav(path: &Path, x: &[f32], rate: u32) -> Result<()> {
         v.extend_from_slice(&s.to_le_bytes());
     }
     std::fs::write(path, &v).with_context(|| format!("写入失败：{}", path.display()))
+}
+
+
+/// 下一个文件 —— 验 WinHTTP 那条路。
+fn get(url: &str, dest: &Path, total: u64) -> Result<()> {
+    use std::io::Write;
+    println!("GET {url}\n →  {}", dest.display());
+    let t0 = std::time::Instant::now();
+    let mut last = 0u64;
+    voice_neural::net::download(url, dest, total, |p| {
+        if p.have - last > 8 * 1024 * 1024 {
+            last = p.have;
+            print!("\r  {:.1} MB", p.have as f64 / 1048576.0);
+            let _ = std::io::stdout().flush();
+        }
+        true
+    })?;
+    let n = std::fs::metadata(dest)?.len();
+    let secs = t0.elapsed().as_secs_f64();
+    println!(
+        "\r  完成 {:.2} MB，{:.1} 秒（{:.1} MB/s）",
+        n as f64 / 1048576.0,
+        secs,
+        n as f64 / 1048576.0 / secs.max(0.001)
+    );
+    Ok(())
 }

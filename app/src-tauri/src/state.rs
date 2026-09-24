@@ -50,6 +50,41 @@ pub struct AppState {
     job: Arc<voice_audio::JobState>,
     /// 声线转换任务。同上，而且它跑的是一个**子进程**。
     clone: Arc<voice_audio::CloneState>,
+    /// 模型下载任务。
+    download: Arc<Download>,
+}
+
+/// 模型下载的共享状态。
+///
+/// 和另外两个任务分开：下载是**网络**受限的，另外两个是 CPU 受限的。
+/// 所以它**不受红线 3 约束** —— 边唱边在后台下模型没有任何问题。
+#[derive(Default)]
+pub struct Download {
+    running: std::sync::atomic::AtomicBool,
+    cancel: std::sync::atomic::AtomicBool,
+    /// 0~1，f32 位模式。
+    progress: std::sync::atomic::AtomicU32,
+    /// 正在下什么，人话。
+    what: Mutex<String>,
+    error: Mutex<Option<String>>,
+}
+
+impl Download {
+    pub fn is_running(&self) -> bool {
+        self.running.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    pub fn progress(&self) -> f32 {
+        f32::from_bits(self.progress.load(std::sync::atomic::Ordering::Relaxed))
+    }
+    pub fn what(&self) -> String {
+        self.what.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+    pub fn error(&self) -> Option<String> {
+        self.error.lock().ok().and_then(|g| g.clone())
+    }
+    pub fn cancel(&self) {
+        self.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[derive(Clone)]
@@ -124,6 +159,54 @@ impl AppState {
             return Err("离线校准正在跑。两个都是满载任务，等它跑完再来。".into());
         }
         voice_audio::clone::start(self.clone_job(), exe, models, input, speaker)
+    }
+
+    pub fn download_job(&self) -> Arc<Download> {
+        self.download.clone()
+    }
+
+    /// 开始把缺的模型下齐。
+    ///
+    /// ⚠️ **刻意不受红线 3 约束**：下载是网络受限的，不跟音频线程抢 CPU。
+    /// 边唱边在后台下模型没有任何问题 —— 把它也拦住是无谓的限制。
+    pub fn start_download(&self, dir: std::path::PathBuf) -> Result<(), String> {
+        use std::sync::atomic::Ordering::Relaxed;
+        if self.download.running.swap(true, Relaxed) {
+            return Err("已经在下了".into());
+        }
+        self.download.cancel.store(false, Relaxed);
+        if let Ok(mut g) = self.download.error.lock() {
+            *g = None;
+        }
+        let d = self.download.clone();
+        std::thread::spawn(move || {
+            let r = voice_neural::assets::download_missing(&dir, |step| {
+                if let Ok(mut g) = d.what.lock() {
+                    *g = format!("{}（{}/{}）", step.name, step.index, step.count);
+                }
+                // 整批的进度：已完成的份数 + 当前这份的比例
+                let inner = if step.total > 0 {
+                    step.have as f32 / step.total as f32
+                } else {
+                    0.0
+                };
+                let overall =
+                    ((step.index - 1) as f32 + inner.clamp(0.0, 1.0)) / step.count.max(1) as f32;
+                d.progress.store(overall.to_bits(), Relaxed);
+                !d.cancel.load(Relaxed)
+            });
+            if let Err(e) = r {
+                let msg = format!("{e:#}");
+                // 取消不是错误 —— 那是用户自己按的
+                if !msg.contains("已取消") {
+                    if let Ok(mut g) = d.error.lock() {
+                        *g = Some(msg);
+                    }
+                }
+            }
+            d.running.store(false, Relaxed);
+        });
+        Ok(())
     }
 
     pub fn start(&self, cfg: EngineConfig) -> anyhow::Result<BackendInfo> {

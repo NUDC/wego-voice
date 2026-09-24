@@ -160,10 +160,11 @@ export function TakesView(p: TakesProps) {
   useEffect(() => {
     const sync = () => api.cloneStatus().then(setClone).catch(() => {});
     sync();
-    if (!clone?.running) return;
+    // 转换或下载在跑时都要轮询
+    if (!clone?.running && !clone?.downloading) return;
     const id = window.setInterval(sync, 400);
     return () => window.clearInterval(id);
-  }, [clone?.running]);
+  }, [clone?.running, clone?.downloading]);
 
   // 转换跑完也要重扫 —— 产物是一个新文件
   const cloneWas = useRef(false);
@@ -562,25 +563,49 @@ function CloneBlock({
             <li key={m}>{m}</li>
           ))}
         </ul>
-        {/* 自动下载还没做 —— 如实说，并把路径给到手。
-            位置默认在**非系统盘根目录**：445 MB 压在通常更小的系统盘上
+        {/* 位置默认在**非系统盘根目录**：445 MB 压在通常更小的系统盘上
             没有道理。选中的盘会被钉住，不会因为插了移动硬盘就换地方。 */}
         <p className="hint dim">
-          自动下载还没做。把上面这些文件放进：
-          <br />
-          <span className="mono">{status.dir}</span>
+          会下载到 <span className="mono">{status.dir}</span>
           <br />
           这个位置是自动选的 —— <b>非系统盘里空间最多的那个</b>，
           U 盘与网络盘不参与。选中之后会记住，不会因为插了移动硬盘就换地方。
+          也可以自己把文件放进去，程序会认。
         </p>
-        <div className="clone-act">
-          <button className="btn" onClick={() => api.cloneRevealModels()} type="button">
-            打开模型目录
-          </button>
-          <button className="btn tiny" onClick={onRefresh} type="button">
-            重新检查
-          </button>
-        </div>
+        {status.downloading ? (
+          <div className="offline-bar">
+            <div className="offline-bar-head">
+              <span>{status.downloadWhat || "下载中"}</span>
+              <span className="mono">{(status.downloadProgress * 100).toFixed(0)}%</span>
+            </div>
+            <div className="offline-track">
+              <span style={{ width: `${status.downloadProgress * 100}%` }} />
+            </div>
+            <div className="clone-act">
+              <button className="btn" onClick={() => api.cloneDownloadCancel()} type="button">
+                暂停
+              </button>
+              {/* 说清楚暂停不等于前功尽弃 —— 否则没人敢按 */}
+              <span className="hint dim">已下的部分保留，下次接着下</span>
+            </div>
+          </div>
+        ) : (
+          <div className="clone-act">
+            <button className="btn primary" onClick={() => api.cloneDownload()} type="button">
+              开始下载
+            </button>
+            <button className="btn" onClick={() => api.cloneRevealModels()} type="button">
+              打开模型目录
+            </button>
+            <button className="btn tiny" onClick={onRefresh} type="button">
+              重新检查
+            </button>
+          </div>
+        )}
+
+        {status.downloadError && (
+          <p className="hint warn">下载失败：{status.downloadError}</p>
+        )}
       </div>
     );
   }

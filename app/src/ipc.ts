@@ -267,6 +267,13 @@ export interface CloneStatus {
   stage: string;
   output: string | null;
   error: string | null;
+
+  /** 下载是否在跑。**和转换任务分开** —— 下载受网络限，转换受 CPU 限。 */
+  downloading: boolean;
+  /** 0~1，整批的进度。 */
+  downloadProgress: number;
+  downloadWhat: string;
+  downloadError: string | null;
 }
 
 export interface CharacterStore {
@@ -310,6 +317,9 @@ export const api = {
   cloneStart: (path: string, speaker: number) =>
     invoke<void>("clone_start", { path, speaker }),
   cloneCancel: () => invoke<void>("clone_cancel"),
+  /** 开始把缺的模型与推理程序下齐。可中途取消，已下的部分保留。 */
+  cloneDownload: () => invoke<void>("clone_download"),
+  cloneDownloadCancel: () => invoke<void>("clone_download_cancel"),
   /** 打开模型目录，返回路径。 */
   cloneRevealModels: () => invoke<string>("clone_reveal_models"),
 

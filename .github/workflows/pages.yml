@@ -61,10 +61,14 @@ jobs:
             tag=$(printf '%s' "$json" | jq -r '.tag_name // empty')
             date=$(printf '%s' "$json" | jq -r '.published_at // empty' | cut -dT -f1)
 
-            # 只发免安装单文件，所以取第一个 .exe 即可。
-            # 仍然排掉 -setup.exe：老版本的 Release 里还留着安装包，
-            # 万一 latest 回退到那些版本，不能把安装包当免安装版发出去。
-            a=$(printf '%s' "$json" | jq -c               '[.assets[]? | select(.name | endswith(".exe")) | select(.name | endswith("-setup.exe") | not)][0] // empty')
+            # ⚠️ Release 里现在有**两个** exe：
+            #   wego-voice_<版本>_x64.exe  ← 主程序，官网要发的就是它
+            #   wego-clone.exe             ← 声线转换的伴生程序，由主程序按需下载
+            #
+            # 所以必须**认前缀**，不能再"取第一个 .exe" —— 那样官网的
+            # 下载按钮会指向 18 MB 的推理程序，而用户点下去拿到的东西打不开。
+            # 仍然排掉 -setup.exe：老版本里还留着安装包。
+            a=$(printf '%s' "$json" | jq -c               '[.assets[]? | select(.name | startswith("wego-voice_")) | select(.name | endswith(".exe")) | select(.name | endswith("-setup.exe") | not)][0] // empty')
             if [ -n "$a" ]; then
               url=$(printf '%s'  "$a" | jq -r '.browser_download_url')
               size=$(printf '%s' "$a" | jq -r '.size')
