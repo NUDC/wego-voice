@@ -21,22 +21,9 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
+use crate::features::Features;
 use crate::session::{expect_shape, Contract};
 use crate::{ENCODER_DIM, ENCODER_HOP, ENCODER_RATE};
-
-/// 一段音频的内容特征。
-pub struct Features {
-    /// 行优先：`data[t * dim + d]`。
-    pub data: Vec<f32>,
-    pub frames: usize,
-    pub dim: usize,
-}
-
-impl Features {
-    pub fn frame(&self, t: usize) -> &[f32] {
-        &self.data[t * self.dim..(t + 1) * self.dim]
-    }
-}
 
 pub struct ContentEncoder {
     session: ort::session::Session,

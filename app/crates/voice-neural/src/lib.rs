@@ -42,11 +42,19 @@
 //! 不下载的人，四格里那三格一格不少。
 //! 这是我认为唯一能同时守住「免安装单文件」和「支持克隆」的形态。
 
+/// 特征对齐。**不依赖 onnx** —— 它是纯 DSP，默认构建就要编译并测试它。
+///
+/// 对齐错了模型学到的是垃圾，而且要等训练跑完才发现。
+/// 这种东西不能藏在一个平时不编译的特性后面。
+pub mod features;
+
 #[cfg(feature = "onnx")]
 pub mod encoder;
 
 #[cfg(feature = "onnx")]
 pub mod session;
+
+pub use features::{align, Aligned, Features};
 
 /// 内容编码器期望的采样率。
 ///

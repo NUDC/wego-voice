@@ -4183,6 +4183,7 @@ version = "0.1.3"
 dependencies = [
  "anyhow",
  "ort",
+ "voice-core",
 ]
 
 [[package]]

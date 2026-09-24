@@ -34,6 +34,11 @@ fn main() -> Result<()> {
             let p: PathBuf = args.get(2).context("用法：wego-neural inspect <模型.onnx>")?.into();
             inspect(&p)
         }
+        Some("features") => {
+            let m: PathBuf = args.get(2).context("用法：wego-neural features <模型.onnx> <干声.wav>")?.into();
+            let w: PathBuf = args.get(3).context("缺少 WAV 路径")?.into();
+            features(&m, &w)
+        }
         Some("encode") => {
             let m: PathBuf = args.get(2).context("用法：wego-neural encode <模型.onnx> <干声.wav>")?.into();
             let w: PathBuf = args.get(3).context("缺少 WAV 路径")?.into();
@@ -161,4 +166,67 @@ fn read_wav_mono(path: &PathBuf) -> Result<Mono> {
         out.push(acc / ch as f32);
     }
     Ok(Mono { samples: out, sample_rate: rate })
+}
+
+
+/// 整条特征管线跑一遍：f0 + 响度 + 内容，三路对齐。
+///
+/// 单元测试验的是不变量（已知事件落在已知帧上、加 6 dB 响度涨 6 dB）。
+/// 这条命令验的是**真模型 + 真音频**下三路确实等长、确实同步 ——
+/// 单测里内容特征是假的，对不上真实帧数这种错它抓不到。
+fn features(model: &PathBuf, wav: &PathBuf) -> Result<()> {
+    let audio = read_wav_mono(wav)?;
+    let secs = audio.samples.len() as f32 / audio.sample_rate as f32;
+    println!("═══ 特征管线 ═══\n");
+    println!("输入 {:.2} 秒 @ {} Hz", secs, audio.sample_rate);
+
+    let t0 = std::time::Instant::now();
+    let track = voice_core::track_pitch(&audio.samples, audio.sample_rate as f32, |_| true)
+        .context("音高提取被取消")?;
+    let t_f0 = t0.elapsed().as_secs_f32();
+
+    let t1 = std::time::Instant::now();
+    let mut enc = voice_neural::encoder::ContentEncoder::open(model, 2)?;
+    let content = enc.encode(&audio.samples, audio.sample_rate)?;
+    let t_enc = t1.elapsed().as_secs_f32();
+
+    let a = voice_neural::align(&track, &audio.samples, audio.sample_rate, &content)?;
+
+    println!("\n音高轨   {} 帧 @ {} 样本步进（{:.1} fps）",
+             track.frames.len(), track.hop,
+             audio.sample_rate as f32 / track.hop as f32);
+    println!("内容特征 {} 帧 × {} 维（{:.1} fps）",
+             content.frames, content.dim, content.frames as f32 / secs);
+    println!("\n对齐后   {:?}", a);
+
+    // 三路等长是这个模块唯一的承诺 —— 在真数据上再确认一次
+    anyhow::ensure!(
+        a.f0.len() == a.frames && a.voiced.len() == a.frames && a.loudness_db.len() == a.frames,
+        "三路长度不一致：f0={} voiced={} loud={} frames={}",
+        a.f0.len(), a.voiced.len(), a.loudness_db.len(), a.frames
+    );
+    anyhow::ensure!(
+        a.content.len() == a.frames * a.dim,
+        "内容特征长度 {} ≠ {}×{}", a.content.len(), a.frames, a.dim
+    );
+
+    let voiced_n = a.voiced.iter().filter(|v| **v).count();
+    let f0s: Vec<f32> = a.f0.iter().copied().filter(|v| *v > 0.0).collect();
+    let lo = a.loudness_db.iter().copied().fold(f32::INFINITY, f32::min);
+    let hi = a.loudness_db.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+    println!("\n有声   {voiced_n} / {} 帧（{:.0}%）", a.frames, voiced_n as f32 / a.frames as f32 * 100.0);
+    if !f0s.is_empty() {
+        let mut v = f0s.clone();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!("f0     中位 {:.1} Hz，范围 {:.1}~{:.1} Hz", v[v.len()/2], v[0], v[v.len()-1]);
+    }
+    println!("响度   {lo:.1} ~ {hi:.1} dBFS");
+    println!("\n耗时   音高 {t_f0:.2}s / 内容 {t_enc:.2}s（含载入模型）");
+
+    anyhow::ensure!(a.f0.iter().all(|v| v.is_finite()), "f0 里有非有限值");
+    anyhow::ensure!(a.loudness_db.iter().all(|v| v.is_finite()), "响度里有非有限值");
+    anyhow::ensure!(a.content.iter().all(|v| v.is_finite()), "内容特征里有非有限值");
+    println!("\n✅ 三路等长、无非有限值");
+    Ok(())
 }
