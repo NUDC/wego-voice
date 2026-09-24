@@ -15,7 +15,7 @@
 //! 都会在建会话那一刻以人话失败，而不是在听感上以玄学失败。
 
 use anyhow::{bail, Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -51,7 +51,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn inspect(path: &PathBuf) -> Result<()> {
+fn inspect(path: &Path) -> Result<()> {
     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     println!("═══ {} ═══", path.display());
     println!("文件大小 {:.1} MB\n", size as f64 / 1048576.0);
@@ -61,7 +61,7 @@ fn inspect(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn encode(model: &PathBuf, wav: &PathBuf) -> Result<()> {
+fn encode(model: &Path, wav: &Path) -> Result<()> {
     let mut enc = voice_neural::encoder::ContentEncoder::open(model, 2)?;
     println!("═══ 内容编码器 ═══");
     print!("{}", enc.contract().describe());
@@ -122,7 +122,7 @@ struct Mono {
 ///
 /// 刻意不依赖 `voice-audio`：那个 crate 拖着 WASAPI 和整条实时链路，
 /// 而这里只需要把一段波形读进来。
-fn read_wav_mono(path: &PathBuf) -> Result<Mono> {
+fn read_wav_mono(path: &Path) -> Result<Mono> {
     let b = std::fs::read(path).with_context(|| format!("读取失败：{}", path.display()))?;
     if b.len() < 44 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
         bail!("不是 WAV 文件：{}", path.display());
@@ -174,7 +174,7 @@ fn read_wav_mono(path: &PathBuf) -> Result<Mono> {
 /// 单元测试验的是不变量（已知事件落在已知帧上、加 6 dB 响度涨 6 dB）。
 /// 这条命令验的是**真模型 + 真音频**下三路确实等长、确实同步 ——
 /// 单测里内容特征是假的，对不上真实帧数这种错它抓不到。
-fn features(model: &PathBuf, wav: &PathBuf) -> Result<()> {
+fn features(model: &Path, wav: &Path) -> Result<()> {
     let audio = read_wav_mono(wav)?;
     let secs = audio.samples.len() as f32 / audio.sample_rate as f32;
     println!("═══ 特征管线 ═══\n");
