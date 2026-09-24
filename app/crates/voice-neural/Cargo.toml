@@ -48,3 +48,9 @@ candle-nn = { version = "0.11", optional = true }
 [[bin]]
 name = "wego-neural"
 required-features = ["onnx"]
+
+# 伴生程序：声线转换真正跑推理的那个 exe。
+# 按需下载，随模型一起走 —— 主程序体积不受影响。
+[[bin]]
+name = "wego-clone"
+required-features = ["tract", "candle"]

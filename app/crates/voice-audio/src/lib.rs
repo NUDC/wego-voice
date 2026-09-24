@@ -14,6 +14,8 @@
 //! 两者数字的差值就是 Tauri 外壳的净开销 —— 同源对比，没有框架差异混在里面。
 
 pub mod backend;
+/// 声线转换任务：跑一个子进程，而不是在本进程里推理。
+pub mod clone;
 pub mod duplex;
 pub mod engine;
 pub mod job;
@@ -27,6 +29,7 @@ pub mod wav;
 
 pub use backend::{BackendConfig, BackendInfo, BackendKind};
 pub use engine::{list_devices, AudioEngine, DeviceList, EngineConfig};
+pub use clone::CloneState;
 pub use job::{JobState, Stage};
 pub use latency::{ImpulseProbe, LatencyStats};
 pub use metrics::{Metrics, MetricsSnapshot};

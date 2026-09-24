@@ -647,3 +647,103 @@ pub fn measure_latency(state: State<AppState>, rounds: usize) -> Result<LatencyR
         diagnosis,
     })
 }
+
+// ────────────────────── 声线转换（神经，按需下载） ──────────────────────
+
+/// 资产与任务状态，一次给全。
+///
+/// 界面需要同时回答"能不能用"和"现在跑到哪了"，分两个命令拿会出现
+/// 两次查询之间状态变了的窗口 —— 表现是按钮闪一下。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneStatus {
+    /// 模型与推理程序是否齐备。
+    pub ready: bool,
+    /// 缺什么，人话。
+    pub missing: Vec<String>,
+    /// 资产目录，让用户能自己把文件放进去。
+    pub dir: String,
+    /// 还差多少字节。
+    pub missing_bytes: u64,
+    pub running: bool,
+    /// 0~1。
+    pub progress: f32,
+    pub stage: String,
+    pub output: Option<String>,
+    pub error: Option<String>,
+}
+
+/// 资产目录：`<应用数据目录>/models/`。
+fn models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("取应用数据目录失败：{e}"))?;
+    Ok(voice_neural::assets::dir(&base))
+}
+
+fn app_data(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("取应用数据目录失败：{e}"))
+}
+
+#[tauri::command]
+pub fn clone_status(app: tauri::AppHandle, state: State<AppState>) -> Result<CloneStatus, String> {
+    let base = app_data(&app)?;
+    let st = voice_neural::assets::status(&base);
+    let j = state.clone_job();
+    Ok(CloneStatus {
+        ready: st.ready(),
+        missing: st.missing(),
+        dir: st.dir.to_string_lossy().into_owned(),
+        missing_bytes: st.missing_bytes(),
+        running: j.is_running(),
+        progress: j.progress(),
+        stage: j.stage(),
+        output: j.output().map(|p| p.to_string_lossy().into_owned()),
+        error: j.error(),
+    })
+}
+
+/// 启动声线转换。守卫在 `AppState` 里，见那边的说明。
+#[tauri::command]
+pub fn clone_start(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    path: String,
+    speaker: usize,
+) -> Result<(), String> {
+    let dir = models_dir(&app)?;
+    let exe = dir.join(voice_neural::assets::COMPANION);
+    // 路径同样要过闸 —— 它来自前端
+    let takes = recordings_dir(&app)?;
+    let input = voice_audio::takes::within(&takes, std::path::Path::new(&path))
+        .map_err(|e| e.to_string())?;
+    state.start_clone(exe, dir, input, speaker.max(1))
+}
+
+#[tauri::command]
+pub fn clone_cancel(state: State<AppState>) {
+    state.clone_job().cancel();
+}
+
+/// 在资源管理器里打开模型目录。
+///
+/// 自动下载还没做（见 README）。在那之前，用户需要能自己把文件放进去 ——
+/// 目录不存在就先建出来，否则"打开"会失败，而用户不知道该建哪个。
+#[tauri::command]
+pub fn clone_reveal_models(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = models_dir(&app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败：{e}"))?;
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("打开资源管理器失败：{e}"))?;
+    }
+    Ok(dir.to_string_lossy().into_owned())
+}

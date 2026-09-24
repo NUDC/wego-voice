@@ -1763,3 +1763,60 @@ input[type="range"]:active::-webkit-slider-thumb {
   font-size: var(--t-micro);
   color: var(--fg-3);
 }
+
+/* ════════════ 声线转换（神经，按需下载） ════════════ */
+
+/* 这块在「没装」和「装好」之间是两种形态。用同一个盒子包住，
+   让切换只是内容变化，而不是整条录音卡的高度重排。 */
+.clone-setup {
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--stroke-soft);
+}
+
+.clone-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+.clone-head b {
+  font-size: var(--t-body);
+  font-weight: 600;
+}
+
+.clone-tag {
+  font-size: var(--t-micro);
+  color: var(--caution);
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 1px 6px;
+  opacity: 0.85;
+}
+
+.clone-tag.ready {
+  color: var(--good);
+}
+
+.clone-missing {
+  margin: var(--s2) 0;
+  padding-left: var(--s4);
+  font-size: var(--t-micro);
+  color: var(--fg-3);
+  line-height: 1.8;
+}
+
+.clone-act {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+  flex-wrap: wrap;
+}
+
+/* 路径要能整条看见并复制，不能被省略号吃掉 —— 用户要照着它找目录 */
+.clone-setup .mono {
+  word-break: break-all;
+  color: var(--fg-2);
+}

@@ -17,6 +17,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 voice-audio.workspace = true
+# 只用默认特性：资产管理（模型在哪、够不够、对不对）。
+# 推理引擎一律不进主程序 —— 那些在伴生程序里。
+voice-neural = { path = "../crates/voice-neural" }
 voice-core.workspace = true
 # tray-icon：系统托盘。它在这个产品里不是装饰 ——
 # 独占模式会占着声卡，托盘是让这件事一直可见的唯一办法（见 src/tray.rs）。

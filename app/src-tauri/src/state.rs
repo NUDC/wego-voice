@@ -48,6 +48,8 @@ pub struct AppState {
     shared: Mutex<Option<Shared>>,
     /// 离线任务状态。**不跟引擎走** —— 它恰恰只在引擎停止时才能跑。
     job: Arc<voice_audio::JobState>,
+    /// 声线转换任务。同上，而且它跑的是一个**子进程**。
+    clone: Arc<voice_audio::CloneState>,
 }
 
 #[derive(Clone)]
@@ -88,6 +90,40 @@ impl AppState {
             return Err("离线处理会占满一个核，和实时引擎抢 CPU 会导致爆音。请先在「调音」页停止引擎。".into());
         }
         voice_audio::job::start_recorrect(self.job(), input, cfg)
+    }
+
+    /// 声线转换任务状态。
+    pub fn clone_job(&self) -> Arc<voice_audio::CloneState> {
+        self.clone.clone()
+    }
+
+    /// 启动声线转换。
+    ///
+    /// ⚠️ 两道守卫，都是红线 3 的落实：
+    ///
+    /// 1. **引擎在跑就拒绝** —— 推理比离线校准更吃 CPU，这条只会更严。
+    /// 2. **离线校准在跑也拒绝** —— 两个都是满载任务，同时跑只会让
+    ///    两个都变慢，而用户看到的是两条都快不起来的进度条。
+    ///
+    /// 子进程那边还会再压一层优先级（`BELOW_NORMAL_PRIORITY_CLASS`），
+    /// 那是万一有人绕过界面时的兜底 —— **不是**这两道守卫的替代。
+    ///
+    /// 和 `start_offline` 一样，守卫放在 `AppState` 而不是 command 里，
+    /// 好让 `--selftest` 走同一条代码验证它。
+    pub fn start_clone(
+        &self,
+        exe: std::path::PathBuf,
+        models: std::path::PathBuf,
+        input: std::path::PathBuf,
+        speaker: usize,
+    ) -> Result<(), String> {
+        if self.is_running() {
+            return Err("声线转换会占满一个核，和实时引擎抢 CPU 会导致爆音。请先在「调音」页停止引擎。".into());
+        }
+        if self.job.is_running() {
+            return Err("离线校准正在跑。两个都是满载任务，等它跑完再来。".into());
+        }
+        voice_audio::clone::start(self.clone_job(), exe, models, input, speaker)
     }
 
     pub fn start(&self, cfg: EngineConfig) -> anyhow::Result<BackendInfo> {

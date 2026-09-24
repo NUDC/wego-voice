@@ -246,6 +246,29 @@ export interface OfflineStatus {
   gapFills: number;
 }
 
+/**
+ * 声线转换（神经）的资产与任务状态。
+ *
+ * ⚠️ 这条路的东西**不在主程序里** —— 模型和推理程序都是按需下载的，
+ * 推理跑在一个单独的子进程里。所以界面必须先回答"装了没有"，
+ * 再谈"跑到哪了"。两者一次给全，避免两次查询之间状态变了导致按钮闪。
+ */
+export interface CloneStatus {
+  /** 模型与推理程序是否齐备。 */
+  ready: boolean;
+  /** 缺什么，人话。 */
+  missing: string[];
+  /** 资产目录 —— 自动下载还没做，用户要能自己把文件放进去。 */
+  dir: string;
+  missingBytes: number;
+  running: boolean;
+  /** 0~1。 */
+  progress: number;
+  stage: string;
+  output: string | null;
+  error: string | null;
+}
+
 export interface CharacterStore {
   characters: Character[];
   activeId: string;
@@ -281,6 +304,14 @@ export const api = {
   revealFile: (path: string) => invoke<void>("reveal_file", { path }),
   /** 用系统默认播放器打开 —— 应用内播放失手时的出路。 */
   openFile: (path: string) => invoke<void>("open_file", { path }),
+
+  cloneStatus: () => invoke<CloneStatus>("clone_status"),
+  /** 启动声线转换。守卫在 Rust 侧 —— 引擎或离线任务在跑时会被拒绝。 */
+  cloneStart: (path: string, speaker: number) =>
+    invoke<void>("clone_start", { path, speaker }),
+  cloneCancel: () => invoke<void>("clone_cancel"),
+  /** 打开模型目录，返回路径。 */
+  cloneRevealModels: () => invoke<string>("clone_reveal_models"),
 
   offlineStart: (input: string, character: Character) =>
     invoke<void>("offline_start", { input, character }),

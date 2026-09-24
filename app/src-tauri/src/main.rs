@@ -190,6 +190,20 @@ fn run_selftest(cli: &Cli) -> anyhow::Result<()> {
     );
     println!("红线 3       引擎运行时拒绝离线任务 ✓");
 
+    // 声线转换同一道红线，而且更严 —— 推理比离线校准更吃 CPU。
+    // 这里给一个不存在的 exe 也没关系：守卫应当在**碰进程之前**就拒绝。
+    let refused = state.start_clone(
+        std::path::PathBuf::from("wego-clone.exe"),
+        std::env::temp_dir(),
+        tmp.clone(),
+        1,
+    );
+    anyhow::ensure!(
+        refused.is_err(),
+        "引擎在跑时声线转换竟然被放行了 —— 推理比离线校准更吃 CPU（红线 3）"
+    );
+    println!("红线 3       引擎运行时拒绝声线转换 ✓");
+
     // 7. 停止后必须干净退出
     state.stop();
     let after = state.tick();
@@ -219,6 +233,31 @@ fn run_selftest(cli: &Cli) -> anyhow::Result<()> {
         tmp.file_name().unwrap_or_default().to_string_lossy(),
         out.file_name().unwrap_or_default().to_string_lossy()
     );
+    // 9. 两个满载任务不许同时跑。
+    //
+    //    引擎已经停了，所以这次被拒的理由必须是"离线任务在跑" ——
+    //    同时跑只会让两个都变慢，而用户看到的是两条都快不起来的进度条。
+    {
+        let job = state.job();
+        voice_audio::job::start_recorrect(job.clone(), tmp.clone(), Default::default())
+            .map_err(|e| anyhow::anyhow!("起不来离线任务：{e}"))?;
+        let refused = state.start_clone(
+            std::path::PathBuf::from("wego-clone.exe"),
+            std::env::temp_dir(),
+            tmp.clone(),
+            1,
+        );
+        job.cancel();
+        let t0 = Instant::now();
+        while job.is_running() {
+            anyhow::ensure!(t0.elapsed().as_secs() < 30, "离线任务取消超时");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let e = refused.expect_err("离线任务在跑时声线转换竟然被放行了");
+        anyhow::ensure!(e.contains("离线"), "拒绝理由不对：{e}");
+        println!("并发守卫     离线任务运行时拒绝声线转换 ✓");
+    }
+
     // 9. 录音页看到的东西：产物必须**挂在**干声下面，改名要一起改
     //
     // 这是跨模块的约定 —— `job::output_path` 决定产物叫什么，

@@ -40,7 +40,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { api, type Character, type OfflineStatus, type TakeInfo } from "../ipc";
+import {
+  api,
+  type Character,
+  type CloneStatus,
+  type OfflineStatus,
+  type TakeInfo,
+} from "../ipc";
 import { Field, Panel } from "./ui";
 
 export interface TakesProps {
@@ -105,6 +111,17 @@ export function TakesView(p: TakesProps) {
    */
   const [jobPath, setJobPath] = useState("");
 
+  /**
+   * 声线转换（神经）的资产与任务状态。
+   *
+   * 和离线校准分开两套状态，是因为它们是**两个不同的任务**：
+   * 一个在本进程里跑纯 DSP，一个跑子进程做推理。合成一套的话，
+   * "现在跑的是哪个"会在界面上说不清。
+   */
+  const [clone, setClone] = useState<CloneStatus | null>(null);
+  /** 这次转换是给哪条录音跑的 —— 同 jobPath，理由一样。 */
+  const [clonePath, setClonePath] = useState("");
+
   const refresh = useCallback(async () => {
     try {
       setTakes(await api.listRecordings());
@@ -137,6 +154,24 @@ export function TakesView(p: TakesProps) {
     const id = window.setInterval(sync, 300);
     return () => window.clearInterval(id);
   }, [st.running]);
+
+  // 声线转换的状态。资产状态只在挂载时查一次（文件不会自己长出来），
+  // 任务状态只在跑的时候轮询。
+  useEffect(() => {
+    const sync = () => api.cloneStatus().then(setClone).catch(() => {});
+    sync();
+    if (!clone?.running) return;
+    const id = window.setInterval(sync, 400);
+    return () => window.clearInterval(id);
+  }, [clone?.running]);
+
+  // 转换跑完也要重扫 —— 产物是一个新文件
+  const cloneWas = useRef(false);
+  useEffect(() => {
+    const now = !!clone?.running;
+    if (cloneWas.current && !now) refresh();
+    cloneWas.current = now;
+  }, [clone?.running, refresh]);
 
   // 任务一结束就重扫目录 —— 产物得立刻出现在它那条干声下面，
   // 否则用户会以为没成功，然后再点一次。
@@ -172,6 +207,17 @@ export function TakesView(p: TakesProps) {
   const askDelete = (path: string) => {
     setConfirming(path);
     window.setTimeout(() => setConfirming((c) => (c === path ? "" : c)), 4000);
+  };
+
+  const startClone = async (path: string) => {
+    setErr("");
+    try {
+      await api.cloneStart(path, 1);
+      setClonePath(path);
+      setClone((c) => (c ? { ...c, running: true, output: null, error: null } : c));
+    } catch (e) {
+      setErr(String(e));
+    }
   };
 
   const commitRename = async (t: TakeInfo) => {
@@ -399,6 +445,14 @@ export function TakesView(p: TakesProps) {
                         （看不到邻域）。产物与干声<b>等长</b>，可以直接对着听。
                       </p>
                     )}
+
+                    <CloneBlock
+                      status={clone}
+                      mine={clonePath === t.path}
+                      blocked={blocked || st.running}
+                      onStart={() => startClone(t.path)}
+                      onRefresh={() => api.cloneStatus().then(setClone).catch(() => {})}
+                    />
                   </div>
                 )}
               </li>
@@ -449,6 +503,138 @@ function Clip({ label, path, note }: { label: string; path: string; note?: strin
         用系统播放器打开
       </button>
       {note && <span className="clip-note mono">{note}</span>}
+    </div>
+  );
+}
+
+
+/**
+ * 声线转换（神经）—— 「像某个指定的人」那一档。
+ *
+ * # 为什么它长得和离线校准不一样
+ *
+ * 离线校准是**本进程里的纯 DSP**，装上就能用。
+ * 这一档不是：它要几百 MB 的模型和一个单独的推理程序，都得按需下载。
+ *
+ * 所以这块 UI 有两种完全不同的形态：**没装**时它是一张说明卡
+ * （缺什么、放哪儿），**装好**时才是一个动作。
+ * 把没装的情况做成"点了报错"，等于把可以提前说清的事留到失败时说。
+ *
+ * # 自动下载还没做
+ *
+ * 模型托管在哪还没定（见 README）。在那之前这里如实说"请自己把文件
+ * 放进这个目录"并给出目录 —— 比做一个指向临时镜像的下载按钮诚实，
+ * 也比假装这个功能不存在有用。
+ */
+function CloneBlock({
+  status,
+  mine,
+  blocked,
+  onStart,
+  onRefresh,
+}: {
+  status: CloneStatus | null;
+  /** 当前这次转换是不是给这条录音跑的。 */
+  mine: boolean;
+  /** 引擎或离线任务在跑 —— 红线 3，不许同时开。 */
+  blocked: boolean;
+  onStart: () => void;
+  onRefresh: () => void;
+}) {
+  if (!status) return null;
+
+  if (!status.ready) {
+    return (
+      <div className="clone-setup">
+        <div className="clone-head">
+          <b>声线转换</b>
+          <span className="clone-tag">需要下载</span>
+        </div>
+        <p className="hint">
+          「像某个指定的人」那一档。它做不进 30 毫秒（内容编码要看上下文），
+          只能放在录制之后 —— 所以它在这里，不在「调音」页。
+          <br />
+          需要 <b>{(status.missingBytes / 1048576).toFixed(0)} MB</b> 的模型与推理程序。
+          <b>主程序体积不受影响</b>，不用这个功能就一个字节都不必下。
+        </p>
+        <ul className="clone-missing">
+          {status.missing.map((m) => (
+            <li key={m}>{m}</li>
+          ))}
+        </ul>
+        {/* 自动下载还没做 —— 如实说，并把路径给到手 */}
+        <p className="hint dim">
+          自动下载还没做。把上面这些文件放进：
+          <br />
+          <span className="mono">{status.dir}</span>
+        </p>
+        <div className="clone-act">
+          <button className="btn" onClick={() => api.cloneRevealModels()} type="button">
+            打开模型目录
+          </button>
+          <button className="btn tiny" onClick={onRefresh} type="button">
+            重新检查
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="clone-setup">
+      <div className="clone-head">
+        <b>声线转换</b>
+        <span className="clone-tag ready">已就绪</span>
+      </div>
+
+      {blocked ? (
+        <p className="hint warn">
+          <b>引擎或离线校准正在跑，声线转换已禁用。</b>
+          推理会占满一个核，和它们抢 CPU 只会让两边都慢下来。
+        </p>
+      ) : (
+        <div className="clone-act">
+          <button
+            className="btn primary"
+            onClick={onStart}
+            disabled={status.running}
+            type="button"
+          >
+            换声
+          </button>
+          {status.running && (
+            <button className="btn" onClick={() => api.cloneCancel()} type="button">
+              取消
+            </button>
+          )}
+          <span className="hint dim">产物是新文件，干声不动</span>
+        </div>
+      )}
+
+      {mine && status.running && (
+        <div className="offline-bar">
+          <div className="offline-bar-head">
+            <span>{status.stage}</span>
+            <span className="mono">{(status.progress * 100).toFixed(0)}%</span>
+          </div>
+          <div className="offline-track">
+            <span style={{ width: `${status.progress * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      {mine && status.error && !status.running && (
+        <p className="hint warn">转换失败：{status.error}</p>
+      )}
+
+      {mine && status.output && !status.running && (
+        <p className="hint">
+          已生成 <b>{status.output.split(/[\\/]/).pop()}</b>。
+          <br />
+          ⚠️ 这一档还在开发中，<b>音质没有经过验证</b> —— 听着不对是预期内的，
+          不是你的素材有问题。
+        </p>
+      )}
     </div>
   );
 }
