@@ -1,29 +1,38 @@
-//! 特征对齐：把 f0、响度、内容特征放到**同一个时间栅格**上。
+//! 特征对齐：把 f0、音量、内容特征放到**解码器的时间栅格**上。
 //!
-//! # 为什么这一步值得单独一个模块，还配这么多测试
+//! # 栅格是 block_size，不是编码器的帧率
 //!
-//! 三路特征来自三条不同的路径，各有各的步进：
+//! ⚠️ 这一条我一开始搞反了，值得写清楚。
 //!
-//! | 特征 | 来源 | 原生步进 |
+//! 内容编码器输出 50 fps（HuBERT 前端 320 倍下采样 @16 kHz），
+//! 很自然会以为它是基准。但**解码器有它自己的栅格**：`block_size`
+//! （DDSP-SVC 默认 512 @44.1 kHz = 86.13 fps），因为它每帧要合成
+//! `block_size` 个样本。
+//!
+//! 所以基准是 block 栅格，三路都往它上面靠：
+//!
+//! | 特征 | 原生步进 | 怎么上栅格 |
 //! |---|---|---|
-//! | 内容 | ContentVec @16 kHz | 320 样本 = **20 ms**（50 fps）|
-//! | f0 | `voice-core::track_pitch` @48 kHz | 128 样本 = 2.67 ms（375 fps）|
-//! | 响度 | 直接从波形算 | 我们自己定 |
+//! | 内容 | 320 @16 kHz（50 fps） | **最近邻**取（见下） |
+//! | f0 | 128 @48 kHz（375 fps） | 对数域插值 |
+//! | 音量 | 直接从波形算 | 按 block 窗算 |
 //!
-//! 对不齐的后果是**模型学到的是垃圾**，而这件事**要等训练跑完才发现** ——
-//! 那时候你只知道"不像"，不知道是素材不够、超参不对、还是第 t 帧的音高
-//! 配到了第 t+3 帧的音色上。
+//! # 内容特征用最近邻，不是插值
 //!
-//! 这类错误没有听感上的特征，只有不变量能抓住它。所以这个模块的测试
-//! 不是"跑通了"，而是「已知的事件必须落在已知的帧上」。
+//! 参考实现（`Units_Encoder.encode`）用的是 `gather(round(ratio · t))`。
+//! 这是个**刻意的选择**而不是省事：内容特征是高维语义向量，
+//! 两帧之间线性插值得到的是一个**两边都不是的中间态** ——
+//! 就像把"啊"和"喔"的向量平均起来，得不到任何一个真实的音。
 //!
-//! # 栅格由内容特征说了算
+//! 音高可以插值（它是连续量），内容不行。
 //!
-//! 内容特征的帧率是模型定死的（HuBERT 卷积前端 320 倍下采样），改不了。
-//! 所以它是基准，f0 和响度往它上面靠 —— 反过来做需要重训模型。
+//! # 音量是线性 RMS，不是 dB
 //!
-//! 第 `t` 帧对应源采样率下的位置 `t * ENCODER_HOP * rate / ENCODER_RATE`，
-//! 48 kHz 下就是 `t * 960`。
+//! 参考实现 `Volume_Extractor`：平方 → 反射填充 → 按 hop 窗取均值 → 开方。
+//! 网络那边是 `volume_embed = Linear(1, 256)` 直接吃这个线性值。
+//!
+//! 我第一版写成了 80 ms 窗的 dBFS —— 数值范围和刻度都不一样。
+//! 要用人家的预训练权重，这里就必须一模一样。
 
 use anyhow::{bail, Result};
 
@@ -43,57 +52,50 @@ impl Features {
     }
 }
 
-impl std::fmt::Debug for Aligned {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let v = self.voiced.iter().filter(|b| **b).count();
-        write!(
-            f,
-            "Aligned {{ {} 帧, {v} 帧有声, 内容 {}×{} }}",
-            self.frames, self.frames, self.dim
-        )
-    }
-}
-
-/// 对齐之后的逐帧特征。三路等长 —— 这是本模块唯一的产出承诺。
-///
-/// `Debug` 刻意不打印 `content`：那是几十万个浮点数，
-/// 一次 `unwrap` 失败就能把终端刷爆，真正的错误反而被冲掉。
+/// 对齐之后的逐帧特征。四路等长 —— 这是本模块唯一的产出承诺。
 pub struct Aligned {
     pub frames: usize,
+    /// 解码器栅格的步进（样本）。
+    pub block_size: usize,
     /// Hz。`voiced[t] == false` 时为 0。
     pub f0: Vec<f32>,
     pub voiced: Vec<bool>,
-    /// dBFS，下限 [`LOUDNESS_FLOOR_DB`]。
-    pub loudness_db: Vec<f32>,
+    /// 线性 RMS（不是 dB）—— 与参考实现一致。
+    pub volume: Vec<f32>,
     /// 行优先内容特征，`frames * dim`。
     pub content: Vec<f32>,
     pub dim: usize,
 }
 
-/// 响度下限。静音段给一个**有限**的值而不是 `-inf` ——
-/// 后者会在训练里变成 NaN，而 NaN 一旦出现就再也查不回是哪一帧带进来的。
-pub const LOUDNESS_FLOOR_DB: f32 = -80.0;
+impl Aligned {
+    pub fn unit(&self, t: usize) -> &[f32] {
+        &self.content[t * self.dim..(t + 1) * self.dim]
+    }
 
-/// 算响度用的窗长（毫秒）。
-///
-/// 80 ms ≈ 4 帧。比一帧宽是刻意的：逐帧 RMS 会跟着基频周期抖，
-/// 而我们要的是"这一刻唱得多响"，不是"这 20 ms 里波形多大"。
-pub const LOUDNESS_WINDOW_MS: f32 = 80.0;
-
-/// 内容特征第 `t` 帧在源采样率下对应的样本位置。
-pub fn frame_pos(t: usize, rate: u32) -> usize {
-    t * ENCODER_HOP * rate as usize / ENCODER_RATE as usize
+    /// 音量的 dB 视图，只给界面用。训练与推理一律用线性值。
+    pub fn volume_db(&self, t: usize) -> f32 {
+        let v = self.volume[t];
+        if v <= 1e-5 {
+            -100.0
+        } else {
+            20.0 * v.log10()
+        }
+    }
 }
 
-/// 把 f0 轨与响度对齐到内容特征的栅格上。
+/// 把 f0、音量、内容对齐到解码器的 block 栅格上。
 pub fn align(
     track: &voice_core::PitchTrack,
     samples: &[f32],
     rate: u32,
     content: &Features,
+    block_size: usize,
 ) -> Result<Aligned> {
     if content.frames == 0 {
         bail!("内容特征是空的");
+    }
+    if block_size == 0 {
+        bail!("block_size 不能为 0");
     }
     if (track.sample_rate - rate as f32).abs() > 1.0 {
         bail!(
@@ -102,29 +104,77 @@ pub fn align(
         );
     }
 
-    let n = content.frames;
-    let mut f0 = Vec::with_capacity(n);
-    let mut voiced = Vec::with_capacity(n);
-    let mut loudness_db = Vec::with_capacity(n);
+    // 与参考实现一致：`n_frames = len // hop + 1`
+    let frames = samples.len() / block_size + 1;
 
-    let half = (LOUDNESS_WINDOW_MS / 1000.0 * rate as f32 / 2.0) as usize;
+    // 内容帧 → block 帧 的比例。
+    // `(block/rate) / (320/16000)`：两边都换算成秒再相除。
+    let ratio =
+        (block_size as f64 / rate as f64) / (ENCODER_HOP as f64 / ENCODER_RATE as f64);
 
-    for t in 0..n {
-        let pos = frame_pos(t, rate);
+    let mut f0 = Vec::with_capacity(frames);
+    let mut voiced = Vec::with_capacity(frames);
+    let mut volume = Vec::with_capacity(frames);
+    let mut out = Vec::with_capacity(frames * content.dim);
+
+    for t in 0..frames {
+        let pos = t * block_size;
         let (hz, v) = sample_pitch(track, pos);
         f0.push(hz);
         voiced.push(v);
-        loudness_db.push(rms_db(samples, pos, half));
+        volume.push(frame_volume(samples, t, block_size));
+
+        // 最近邻，且钳在最后一帧上 —— block 栅格通常比内容栅格长一点
+        let idx = ((ratio * t as f64).round() as usize).min(content.frames - 1);
+        out.extend_from_slice(content.frame(idx));
     }
 
     Ok(Aligned {
-        frames: n,
+        frames,
+        block_size,
         f0,
         voiced,
-        loudness_db,
-        content: content.data.clone(),
+        volume,
+        content: out,
         dim: content.dim,
     })
+}
+
+/// 第 `t` 帧的线性 RMS 音量。
+///
+/// 与参考实现逐步对应：平方 → 反射填充 hop/2 → 取 hop 长的均值 → 开方。
+/// 窗口正好**以 `t * hop` 为中心**。
+fn frame_volume(x: &[f32], t: usize, hop: usize) -> f32 {
+    if x.is_empty() {
+        return 0.0;
+    }
+    let left = hop / 2;
+    let mut acc = 0.0f64;
+    for j in 0..hop {
+        // 填充后的下标 j + t*hop 对应原始下标
+        let orig = (t * hop + j) as isize - left as isize;
+        let i = reflect(orig, x.len());
+        acc += (x[i] as f64).powi(2);
+    }
+    ((acc / hop as f64).sqrt()) as f32
+}
+
+/// 反射索引（不重复边界值），对应 numpy 的 `mode='reflect'`。
+///
+/// `[a,b,c]` 左填 1 得到 `[b,a,b,c]` —— 边界值 `a` 只出现一次。
+/// 用重复边界（`edge`）的话，静音起始处会多出一段直流，
+/// 表现为第一帧音量偏高。
+fn reflect(i: isize, n: usize) -> usize {
+    if n == 1 {
+        return 0;
+    }
+    let n = n as isize;
+    let period = 2 * (n - 1);
+    let mut k = i.rem_euclid(period);
+    if k >= n {
+        k = period - k;
+    }
+    k as usize
 }
 
 /// 在样本位置 `pos` 处取音高。
@@ -162,22 +212,15 @@ fn sample_pitch(track: &voice_core::PitchTrack, pos: usize) -> (f32, bool) {
     }
 }
 
-/// 以 `pos` 为中心、半宽 `half` 的 RMS（dBFS）。
-fn rms_db(x: &[f32], pos: usize, half: usize) -> f32 {
-    if x.is_empty() {
-        return LOUDNESS_FLOOR_DB;
+impl std::fmt::Debug for Aligned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let v = self.voiced.iter().filter(|b| **b).count();
+        write!(
+            f,
+            "Aligned {{ {} 帧 @ block {}, {v} 帧有声, 内容 {}×{} }}",
+            self.frames, self.block_size, self.frames, self.dim
+        )
     }
-    let lo = pos.saturating_sub(half);
-    let hi = (pos + half).min(x.len());
-    if hi <= lo {
-        return LOUDNESS_FLOOR_DB;
-    }
-    let seg = &x[lo..hi];
-    let ms = seg.iter().map(|v| v * v).sum::<f32>() / seg.len() as f32;
-    if ms <= 0.0 {
-        return LOUDNESS_FLOOR_DB;
-    }
-    (10.0 * ms.log10()).max(LOUDNESS_FLOOR_DB)
 }
 
 #[cfg(test)]
@@ -185,7 +228,8 @@ mod tests {
     use super::*;
     use std::f32::consts::TAU;
 
-    const SR: u32 = 48_000;
+    const SR: u32 = 44_100;
+    const BS: usize = 512;
 
     /// 造一段：前 `silence_secs` 秒静音，之后是 `hz` 的类人声。
     fn clip(silence_secs: f32, hz: f32, total_secs: f32, level: f32) -> Vec<f32> {
@@ -204,147 +248,196 @@ mod tests {
             .collect()
     }
 
-    fn fake_content(frames: usize) -> Features {
-        Features { data: vec![0.0; frames * 4], frames, dim: 4 }
+    /// 造一个每帧都不一样的内容特征，方便查"取到了第几帧"。
+    fn ramp_content(frames: usize, dim: usize) -> Features {
+        let data = (0..frames * dim).map(|i| (i / dim) as f32).collect();
+        Features { data, frames, dim }
     }
 
     #[test]
-    fn frame_pos_is_twenty_milliseconds() {
-        assert_eq!(frame_pos(0, 48_000), 0);
-        assert_eq!(frame_pos(1, 48_000), 960); // 20 ms
-        assert_eq!(frame_pos(50, 48_000), 48_000); // 整 1 秒
-        assert_eq!(frame_pos(1, 16_000), 320);
+    fn frame_count_matches_the_reference_formula() {
+        // n_frames = len // hop + 1
+        let x = vec![0.0f32; BS * 10 + 7];
+        let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
+        let c = ramp_content(200, 2);
+        let a = align(&track, &x, SR, &c, BS).unwrap();
+        assert_eq!(a.frames, 11);
     }
 
-    /// 三路必须等长 —— 这是本模块唯一的产出承诺。
+    /// ⚠️ 内容特征必须**最近邻**取，不是插值。
+    ///
+    /// 内容是高维语义向量，两帧之间插值得到的是一个两边都不是的中间态 ——
+    /// 像把"啊"和"喔"的向量平均起来。这里用 ramp 内容查取到的下标：
+    /// 每个值必须是**整数**（说明来自某一帧原样），而不是小数。
     #[test]
-    fn all_three_streams_have_the_same_length() {
+    fn units_are_gathered_not_interpolated() {
+        let x = vec![0.0f32; BS * 40];
+        let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
+        let c = ramp_content(60, 3);
+        let a = align(&track, &x, SR, &c, BS).unwrap();
+
+        for t in 0..a.frames {
+            let u = a.unit(t);
+            assert_eq!(u[0], u[0].round(), "第 {t} 帧内容被插值了：{}", u[0]);
+            assert_eq!(u[0], u[1], "同一帧内三个维度应当来自同一源帧");
+        }
+
+        // 比例：block 11.6 ms / 编码器 20 ms ≈ 0.5805
+        let ratio = (BS as f64 / SR as f64) / (ENCODER_HOP as f64 / ENCODER_RATE as f64);
+        for t in [0usize, 1, 5, 17, 33] {
+            let want = (ratio * t as f64).round() as f32;
+            assert_eq!(a.unit(t)[0], want, "第 {t} 帧取错了源帧");
+        }
+    }
+
+    /// 内容帧不够时钳在最后一帧，不越界、不 panic。
+    #[test]
+    fn short_content_is_clamped_not_out_of_bounds() {
+        let x = vec![0.0f32; BS * 100];
+        let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
+        let c = ramp_content(5, 2); // 远远不够
+        let a = align(&track, &x, SR, &c, BS).unwrap();
+        assert_eq!(a.frames, 101);
+        assert_eq!(a.unit(100)[0], 4.0, "没有钳在最后一帧");
+    }
+
+    /// 四路必须等长。
+    #[test]
+    fn all_streams_have_the_same_length() {
         let x = clip(0.0, 220.0, 2.0, 0.3);
         let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
-        let c = fake_content(100);
-        let a = align(&track, &x, SR, &c).unwrap();
-        assert_eq!(a.frames, 100);
-        assert_eq!(a.f0.len(), 100);
-        assert_eq!(a.voiced.len(), 100);
-        assert_eq!(a.loudness_db.len(), 100);
+        let c = ramp_content(200, 4);
+        let a = align(&track, &x, SR, &c, BS).unwrap();
+        assert_eq!(a.f0.len(), a.frames);
+        assert_eq!(a.voiced.len(), a.frames);
+        assert_eq!(a.volume.len(), a.frames);
+        assert_eq!(a.content.len(), a.frames * a.dim);
     }
 
-    /// ⚠️ 真正的对齐测试：**已知的事件必须落在已知的帧上。**
+    /// ⚠️ 已知的事件必须落在已知的帧上。
     ///
-    /// 前 1 秒静音、之后有声。50 fps 下，第 50 帧就是那个边界。
-    /// 差几帧的错误在形状测试里完全看不出来，只有这种测试抓得住。
+    /// 前 1 秒静音。44.1 kHz / block 512 = 86.13 fps，所以边界在第 86 帧。
+    /// 差几帧的错误在形状测试里完全看不出来。
     #[test]
     fn a_known_event_lands_on_the_known_frame() {
         let x = clip(1.0, 220.0, 2.0, 0.3);
         let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
-        let c = fake_content(100);
-        let a = align(&track, &x, SR, &c).unwrap();
+        let c = ramp_content(200, 2);
+        let a = align(&track, &x, SR, &c, BS).unwrap();
 
-        // 静音段中部：必须清音、必须在地板上
-        assert!(!a.voiced[20], "静音段第 20 帧被判成了有声");
-        assert_eq!(a.loudness_db[20], LOUDNESS_FLOOR_DB, "静音段响度不在地板上");
+        assert!(!a.voiced[40], "静音段第 40 帧被判成了有声");
+        assert!(a.volume[40] < 1e-4, "静音段音量是 {}", a.volume[40]);
 
-        // 有声段中部：必须有声，且音高对
-        assert!(a.voiced[75], "有声段第 75 帧被判成了清音");
-        let cents = 1200.0 * (a.f0[75] / 220.0).log2();
-        assert!(cents.abs() < 50.0, "第 75 帧音高是 {} Hz，偏 {cents:.0} 音分", a.f0[75]);
-        assert!(a.loudness_db[75] > -40.0, "有声段响度只有 {}", a.loudness_db[75]);
+        assert!(a.voiced[140], "有声段第 140 帧被判成了清音");
+        let cents = 1200.0 * (a.f0[140] / 220.0).log2();
+        assert!(cents.abs() < 50.0, "第 140 帧音高 {} Hz（偏 {cents:.0} 音分）", a.f0[140]);
 
-        // 边界：响度的跃升必须发生在第 50 帧附近（±3 帧 = ±60 ms）。
-        // 响度窗是 80 ms，所以过渡本身就有几帧宽，这个容差是它带来的。
-        let jump = (1..100)
-            .find(|&t| a.loudness_db[t] > -40.0)
-            .expect("整段都没有响起来");
+        // 音量窗只有一个 block 宽（11.6 ms），所以跃升很陡 —— 容差给 2 帧
+        let expect = (SR as f32 / BS as f32).round() as i32; // 86
+        let jump = (1..a.frames).find(|&t| a.volume[t] > 0.01).expect("整段没响起来");
         assert!(
-            (jump as i32 - 50).abs() <= 3,
-            "响度在第 {jump} 帧才起来，预期第 50 帧附近 —— 对齐差了 {} 帧",
-            jump as i32 - 50
+            (jump as i32 - expect).abs() <= 2,
+            "音量在第 {jump} 帧才起来，预期第 {expect} 帧附近"
         );
     }
 
-    /// 音高插值不许跨过清音段。
+    /// 音量是**线性 RMS**：增益 ×2，音量必须 ×2。
     ///
-    /// 一边 0 一边 220，线性插出来的 110 是个**凭空捏造的低八度**，
-    /// 而它恰好落在换气的位置上 —— 模型会把"换气"学成"降八度"。
+    /// 写成 dB 的话这条会变成 +6.02，而网络那边 `Linear(1,256)`
+    /// 吃的是线性值 —— 刻度错了，预训练权重就全对不上。
+    #[test]
+    fn volume_is_linear_rms_not_db() {
+        let x = clip(0.0, 220.0, 1.0, 0.2);
+        let loud: Vec<f32> = x.iter().map(|v| v * 2.0).collect();
+        let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
+        let c = ramp_content(100, 2);
+
+        let a = align(&track, &x, SR, &c, BS).unwrap();
+        let b = align(&track, &loud, SR, &c, BS).unwrap();
+
+        for (t, (lo, hi)) in a.volume.iter().zip(&b.volume).enumerate().take(60).skip(10) {
+            let r = hi / lo.max(1e-9);
+            assert!((r - 2.0).abs() < 0.01, "第 {t} 帧增益 ×2，音量只涨了 {r:.3} 倍");
+        }
+    }
+
+    /// 已知幅度的正弦：RMS 必须是 A/√2。
+    #[test]
+    fn volume_matches_the_textbook_value() {
+        let n = BS * 40;
+        let x: Vec<f32> = (0..n).map(|i| 0.5 * (TAU * 300.0 * i as f32 / SR as f32).sin()).collect();
+        let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
+        let c = ramp_content(80, 2);
+        let a = align(&track, &x, SR, &c, BS).unwrap();
+        let want = 0.5 / 2f32.sqrt();
+        for (t, v) in a.volume.iter().enumerate().take(35).skip(5) {
+            assert!((v - want).abs() < 0.02, "第 {t} 帧 RMS = {v}，应当是 {want:.4}");
+        }
+    }
+
+    /// 反射填充要和 numpy 的 `mode='reflect'` 一致（边界值不重复）。
+    #[test]
+    fn reflect_matches_numpy() {
+        // [a,b,c,d] 下标 0..3
+        assert_eq!(reflect(-1, 4), 1);
+        assert_eq!(reflect(-2, 4), 2);
+        assert_eq!(reflect(-3, 4), 3);
+        assert_eq!(reflect(0, 4), 0);
+        assert_eq!(reflect(3, 4), 3);
+        assert_eq!(reflect(4, 4), 2);
+        assert_eq!(reflect(5, 4), 1);
+        assert_eq!(reflect(0, 1), 0);
+    }
+
+    /// 音高插值不许跨过清音段。
     #[test]
     fn pitch_is_never_interpolated_across_silence() {
         let x = clip(1.0, 220.0, 2.0, 0.3);
         let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
-        let c = fake_content(100);
-        let a = align(&track, &x, SR, &c).unwrap();
+        let c = ramp_content(200, 2);
+        let a = align(&track, &x, SR, &c, BS).unwrap();
 
-        for t in 0..100 {
+        for t in 0..a.frames {
             if a.voiced[t] {
                 let cents = 1200.0 * (a.f0[t] / 220.0).log2();
-                assert!(
-                    cents.abs() < 100.0,
-                    "第 {t} 帧判为有声却给出 {} Hz（偏 {cents:.0} 音分）—— 多半是跨清音插值",
-                    a.f0[t]
-                );
+                assert!(cents.abs() < 100.0, "第 {t} 帧有声却给出 {} Hz", a.f0[t]);
             } else {
                 assert_eq!(a.f0[t], 0.0, "第 {t} 帧判为清音，f0 却是 {}", a.f0[t]);
             }
         }
     }
 
-    /// 整体加 6 dB，响度必须整体 +6 dB。
-    ///
-    /// 这条能抓住"忘了开方""log 底写错""窗口归一化漏了"这一类错 ——
-    /// 它们都不会让数值变得离谱，只会让刻度悄悄变形。
     #[test]
-    fn six_db_of_gain_shows_up_as_six_db() {
-        let x = clip(0.0, 220.0, 1.5, 0.2);
-        let loud: Vec<f32> = x.iter().map(|v| v * 2.0).collect();
-        let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
-        let c = fake_content(60);
-
-        let a = align(&track, &x, SR, &c).unwrap();
-        let b = align(&track, &loud, SR, &c).unwrap();
-
-        for t in 10..50 {
-            let d = b.loudness_db[t] - a.loudness_db[t];
-            assert!(
-                (d - 6.02).abs() < 0.1,
-                "第 {t} 帧加了 6 dB，响度只涨了 {d:.2} dB"
-            );
-        }
-    }
-
-    /// 静音给有限值，不给 -inf —— NaN 一旦进了训练就再也查不回源头。
-    #[test]
-    fn silence_gives_a_finite_floor_not_negative_infinity() {
+    fn everything_is_finite() {
         let x = vec![0.0f32; SR as usize];
         let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
-        let c = fake_content(40);
-        let a = align(&track, &x, SR, &c).unwrap();
-        assert!(a.loudness_db.iter().all(|v| v.is_finite()), "响度里有非有限值");
+        let c = ramp_content(100, 2);
+        let a = align(&track, &x, SR, &c, BS).unwrap();
         assert!(a.f0.iter().all(|v| v.is_finite()));
-        assert_eq!(a.loudness_db[10], LOUDNESS_FLOOR_DB);
+        assert!(a.volume.iter().all(|v| v.is_finite()));
+        assert!(a.content.iter().all(|v| v.is_finite()));
     }
 
-    /// 采样率不一致要**当场**报错，而不是安静地算错。
     #[test]
     fn mismatched_sample_rates_are_refused() {
         let x = clip(0.0, 220.0, 1.0, 0.3);
-        let track = voice_core::track_pitch(&x, 44_100.0, |_| true).unwrap();
-        let c = fake_content(40);
-        let e = align(&track, &x, 48_000, &c).unwrap_err().to_string();
+        let track = voice_core::track_pitch(&x, 48_000.0, |_| true).unwrap();
+        let c = ramp_content(100, 2);
+        let e = align(&track, &x, SR, &c, BS).unwrap_err().to_string();
         assert!(e.contains("同源"), "{e}");
     }
 
-    /// 同样的输入跑两遍必须逐位相同。
-    ///
-    /// 特征是要落盘缓存的。不确定的话，缓存命中与否会产出不同的训练结果，
-    /// 而这种 bug 的表现是"有时候训出来好有时候不好"。
+    /// 同样的输入跑两遍必须逐位相同 —— 特征是要落盘缓存的。
     #[test]
     fn alignment_is_deterministic() {
         let x = clip(0.3, 196.0, 1.5, 0.25);
         let track = voice_core::track_pitch(&x, SR as f32, |_| true).unwrap();
-        let c = fake_content(60);
-        let a = align(&track, &x, SR, &c).unwrap();
-        let b = align(&track, &x, SR, &c).unwrap();
+        let c = ramp_content(150, 2);
+        let a = align(&track, &x, SR, &c, BS).unwrap();
+        let b = align(&track, &x, SR, &c, BS).unwrap();
         assert_eq!(a.f0, b.f0);
         assert_eq!(a.voiced, b.voiced);
-        assert_eq!(a.loudness_db, b.loudness_db);
+        assert_eq!(a.volume, b.volume);
+        assert_eq!(a.content, b.content);
     }
 }

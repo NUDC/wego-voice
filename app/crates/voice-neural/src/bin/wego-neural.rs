@@ -207,7 +207,13 @@ fn features(model: &Path, wav: &Path) -> Result<()> {
     let content = enc.encode(&audio.samples, audio.sample_rate)?;
     let t_enc = t1.elapsed().as_secs_f32();
 
-    let a = voice_neural::align(&track, &audio.samples, audio.sample_rate, &content)?;
+    let a = voice_neural::align(
+        &track,
+        &audio.samples,
+        audio.sample_rate,
+        &content,
+        voice_neural::BLOCK_SIZE,
+    )?;
 
     println!("\n音高轨   {} 帧 @ {} 样本步进（{:.1} fps）",
              track.frames.len(), track.hop,
@@ -218,9 +224,9 @@ fn features(model: &Path, wav: &Path) -> Result<()> {
 
     // 三路等长是这个模块唯一的承诺 —— 在真数据上再确认一次
     anyhow::ensure!(
-        a.f0.len() == a.frames && a.voiced.len() == a.frames && a.loudness_db.len() == a.frames,
-        "三路长度不一致：f0={} voiced={} loud={} frames={}",
-        a.f0.len(), a.voiced.len(), a.loudness_db.len(), a.frames
+        a.f0.len() == a.frames && a.voiced.len() == a.frames && a.volume.len() == a.frames,
+        "各路长度不一致：f0={} voiced={} vol={} frames={}",
+        a.f0.len(), a.voiced.len(), a.volume.len(), a.frames
     );
     anyhow::ensure!(
         a.content.len() == a.frames * a.dim,
@@ -229,8 +235,8 @@ fn features(model: &Path, wav: &Path) -> Result<()> {
 
     let voiced_n = a.voiced.iter().filter(|v| **v).count();
     let f0s: Vec<f32> = a.f0.iter().copied().filter(|v| *v > 0.0).collect();
-    let lo = a.loudness_db.iter().copied().fold(f32::INFINITY, f32::min);
-    let hi = a.loudness_db.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let lo = a.volume.iter().copied().fold(f32::INFINITY, f32::min);
+    let hi = a.volume.iter().copied().fold(f32::NEG_INFINITY, f32::max);
 
     println!("\n有声   {voiced_n} / {} 帧（{:.0}%）", a.frames, voiced_n as f32 / a.frames as f32 * 100.0);
     if !f0s.is_empty() {
@@ -238,11 +244,11 @@ fn features(model: &Path, wav: &Path) -> Result<()> {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
         println!("f0     中位 {:.1} Hz，范围 {:.1}~{:.1} Hz", v[v.len()/2], v[0], v[v.len()-1]);
     }
-    println!("响度   {lo:.1} ~ {hi:.1} dBFS");
+    println!("音量   {lo:.5} ~ {hi:.5}（线性 RMS）");
     println!("\n耗时   音高 {t_f0:.2}s / 内容 {t_enc:.2}s（含载入模型）");
 
     anyhow::ensure!(a.f0.iter().all(|v| v.is_finite()), "f0 里有非有限值");
-    anyhow::ensure!(a.loudness_db.iter().all(|v| v.is_finite()), "响度里有非有限值");
+    anyhow::ensure!(a.volume.iter().all(|v| v.is_finite()), "音量里有非有限值");
     anyhow::ensure!(a.content.iter().all(|v| v.is_finite()), "内容特征里有非有限值");
     println!("\n✅ 三路等长、无非有限值");
     Ok(())

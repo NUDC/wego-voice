@@ -52,6 +52,9 @@ pub mod features;
 /// 是整个解码器里唯一能在没有模型时完整验证的部分。
 pub mod source;
 
+/// 合成级：频域滤波 + 重建。同样不含权重，能验到底。
+pub mod synth;
+
 #[cfg(feature = "onnx")]
 pub mod encoder;
 
@@ -59,6 +62,16 @@ pub mod encoder;
 pub mod session;
 
 pub use features::{align, Aligned, Features};
+
+/// 解码器的默认帧步进（样本）。DDSP-SVC 5.0 的配置。
+///
+/// ⚠️ 这是**解码器的**栅格，不是内容编码器的。
+/// 512 @44.1 kHz = 86.13 fps，而编码器是 50 fps —— 两者不一样，
+/// 必须把编码器的输出往这个栅格上靠（见 `features`）。
+pub const BLOCK_SIZE: usize = 512;
+
+/// 解码器的采样率（DDSP-SVC 5.0 配置）。
+pub const DECODER_RATE: u32 = 44_100;
 
 /// 内容编码器期望的采样率。
 ///
