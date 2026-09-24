@@ -203,9 +203,7 @@ mod tests {
     #[test]
     fn unvoiced_frames_do_not_blow_up() {
         let mut f0 = vec![220.0f32; 40];
-        for t in 10..20 {
-            f0[t] = 0.0; // 换气
-        }
+        f0[10..20].fill(0.0); // 换气
         let s = combtooth(&f0, SR, BS);
         assert!(s.combtooth.iter().all(|v| v.is_finite()), "有非有限值");
         assert!(
@@ -258,8 +256,16 @@ mod tests {
 
         // 在颤音的两个极值处各量一次脉冲间距。窗口只取 3 帧，
         // 比颤音周期（167 ms ≈ 14 帧）短得多 —— 量到的是瞬时值。
-        let hi_t = (2..98).max_by(|a, b| f0[*a].partial_cmp(&f0[*b]).unwrap()).unwrap();
-        let lo_t = (2..98).min_by(|a, b| f0[*a].partial_cmp(&f0[*b]).unwrap()).unwrap();
+        let pick = |best: fn(f32, f32) -> bool| -> usize {
+            f0.iter()
+                .enumerate()
+                .skip(2)
+                .take(96)
+                .fold((2usize, f0[2]), |acc, (i, v)| if best(*v, acc.1) { (i, *v) } else { acc })
+                .0
+        };
+        let hi_t = pick(|v, b| v > b);
+        let lo_t = pick(|v, b| v < b);
         let seg = |t: usize| pulse_spacing(&s.combtooth[(t - 1) * BS..(t + 2) * BS]);
 
         let (sp_hi, sp_lo) = (seg(hi_t), seg(lo_t));
