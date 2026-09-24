@@ -810,3 +810,64 @@ footer {
 .foot .spacer {
   margin-left: auto;
 }
+
+/* ───── 两根柱子 ───── */
+
+/* 每根柱子一个标题 + 两档实现。排成 2×2 是为了让结构一次说完：
+   横着看是「音准 / 声线」，竖着看是「当下 / 录完之后」。 */
+.pillar + .pillar {
+  margin-top: 46px;
+}
+
+.pillar-head {
+  margin-bottom: 18px;
+}
+
+.pillar-head h3 {
+  margin: 0 0 6px;
+  font-size: 21px;
+  letter-spacing: -0.02em;
+}
+
+.pillar-head p {
+  margin: 0;
+  color: var(--dim);
+  font-size: 15px;
+}
+
+/* 「实时 / 离线」这个标签是两档之间唯一的区别标记，
+   所以它要先于标题被读到 —— 小号、等宽、加字距。 */
+.tier-when {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  align-self: flex-start;
+  margin-bottom: 12px;
+}
+
+/* ⚠️ 全局 h4 是给「需要 / 做不到」那两个小标题定的：12px、
+   全大写、灰色。档位标题借了同一个标签，必须把三样都覆盖掉 ——
+   只改字号的话会得到一个"大号的灰色全大写"，比原来更怪。 */
+.two > article h4 {
+  margin: 0 0 10px;
+  font-size: 16.5px;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: -0.01em;
+  font-weight: 650;
+}
+
+.two > article {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 徽章压到底，两张卡的徽章才会齐平 */
+.two > article .status {
+  margin-top: auto;
+  align-self: flex-start;
+}

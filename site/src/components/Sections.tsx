@@ -1,7 +1,7 @@
 import {
   BUDGET_SCALE_MS,
   FACTS,
-  FEATURES,
+  PILLARS,
   LATENCY_BUDGET,
   RELEASES,
   REPO,
@@ -9,27 +9,46 @@ import {
 } from "../content";
 import { RichText, Section, StatusBadge, TickList } from "./Bits";
 
+/**
+ * 两根柱子，每根两档。
+ *
+ * 排成 2×2 是刻意的：它把这个工具的全部结构一次说完 ——
+ * 横着看是「音准 / 声线」，竖着看是「当下 / 录完之后」。
+ * 而两档的分界不是产品决策，是物理约束：30 毫秒以内只能用纯 DSP。
+ */
 export function Features() {
   return (
     <Section band>
-      <div className="cards">
-        {FEATURES.map((f) => (
-          <article key={f.title}>
-            <h3 style={{ marginTop: 0 }}>{f.title}</h3>
-            <p>{f.body}</p>
-            <TickList items={f.points} />
-            <StatusBadge status={f.status} />
-          </article>
-        ))}
-      </div>
+      {PILLARS.map((p) => (
+        <div key={p.title} className="pillar">
+          <div className="pillar-head">
+            <h3>{p.title}</h3>
+            <p>{p.lede}</p>
+          </div>
+          <div className="two">
+            {p.tiers.map((t) => (
+              <article key={t.title}>
+                <span className="tier-when">{t.when}</span>
+                <h4>{t.title}</h4>
+                <p>{t.body}</p>
+                <TickList items={t.points} />
+                <StatusBadge status={t.status} />
+              </article>
+            ))}
+          </div>
+        </div>
+      ))}
 
-      {/* 原来这条在 FAQ 里。FAQ 删掉之后必须搬过来 ——
-          它不是营销文案，是**能力边界 + 使用者义务**的公开声明。 */}
+      {/* ⚠️ 这一段不是营销文案，是**能力边界与使用者义务**的公开声明。
+          写在这里的每一句都必须是已经为真的事实 —— 承诺未来会做的事，
+          在用户眼里和骗没有区别。 */}
       <p className="note">
-        声线塑形<b>做不到「像某个指定的人」</b>，也不提供任何声线来源 ——
-        不上架、不托管任何人的声纹，参考素材完全由你自己提供。
-        相应地，<b>取得被模拟者同意是使用者的责任</b>，软件在导入时会明确提示；
-        所有输出都带 AI 生成标识与不可听水印，不可关闭。
+        本软件<b>不提供、不上架、不托管任何人的声纹</b> ——
+        参考素材与目标声线完全由你自己提供，
+        <b>取得被模拟者同意是使用者的责任</b>。
+        <br />
+        AI 生成标识与水印<b>尚未实现</b>，会随神经声线转换一起上线 ——
+        在那之前，可下载的版本里只有纯 DSP 的声线塑形，它做不到克隆。
       </p>
     </Section>
   );
