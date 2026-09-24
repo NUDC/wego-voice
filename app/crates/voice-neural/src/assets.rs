@@ -69,11 +69,139 @@ pub const ASSETS: &[Asset] = &[
 /// 3. 它崩了主程序不跟着崩
 pub const COMPANION: &str = "wego-clone.exe";
 
-/// 资产目录：`<应用数据目录>/models/`。
+/// 模型目录的文件夹名。放在盘根下，用户一眼能认出来是谁的。
+pub const DIR_NAME: &str = "wego-voice-models";
+
+/// 记住选中位置的小文件。
 ///
-/// 放应用数据目录而不是 exe 旁边：主程序是**免安装**的，用户会把它
-/// 拷来拷去；几百 MB 的模型跟着走没有道理，而且 exe 可能放在
-/// 只读位置（U 盘、Program Files）。
+/// 必须记下来，不能每次开机重新挑：外接硬盘插上又拔掉、某个盘突然
+/// 空间变多，都会让"自动挑"挑到不同的盘 —— 而用户看到的是
+/// **模型莫名其妙又要重下一遍**。
+pub const PIN_FILE: &str = "models-dir.txt";
+
+/// 一个盘的信息。
+///
+/// 抽成纯数据是为了让**挑盘规则可测** —— 枚举盘符要走 Win32，
+/// 测不了；但"该挑哪个"是纯逻辑，恰恰是容易出错的那部分。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Drive {
+    pub letter: char,
+    /// 固定硬盘。U 盘、网络盘、光驱都不算。
+    pub fixed: bool,
+    /// 是不是系统盘。
+    pub system: bool,
+    pub free: u64,
+}
+
+/// 放模型至少要留的空间。
+///
+/// 模型本身约 425 MB，伴生程序 18 MB。留到 2 GB 是因为**塞满系统盘或
+/// 数据盘的最后一点空间，比不装这个功能糟得多** —— 磁盘写满会让
+/// 正在录的音频写入失败，而那才是用户真正不能丢的东西。
+pub const NEED_FREE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// 从候选盘里挑一个放模型。
+///
+/// 规则，按优先级：
+/// 1. **非系统盘**优先 —— 几百 MB 不该压在通常更小的系统盘上
+/// 2. 只要**固定硬盘** —— U 盘拔掉、网络盘掉线，表现是模型"丢了"
+/// 3. 剩余空间最多的那个
+/// 4. 全都不合格就返回 `None`，交给调用方退回应用数据目录
+pub fn pick_drive(drives: &[Drive], need: u64) -> Option<char> {
+    let ok = |d: &&Drive| d.fixed && d.free >= need;
+    drives
+        .iter()
+        .filter(|d| !d.system)
+        .filter(ok)
+        .max_by_key(|d| d.free)
+        .or_else(|| drives.iter().filter(|d| d.system).filter(ok).max_by_key(|d| d.free))
+        .map(|d| d.letter)
+}
+
+/// 枚举本机的盘。
+#[cfg(windows)]
+pub fn list_drives() -> Vec<Drive> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetLogicalDrives() -> u32;
+        fn GetDriveTypeW(root: *const u16) -> u32;
+        fn GetDiskFreeSpaceExW(
+            dir: *const u16,
+            free_to_caller: *mut u64,
+            total: *mut u64,
+            free_total: *mut u64,
+        ) -> i32;
+    }
+    const DRIVE_FIXED: u32 = 3;
+
+    // 系统盘。取不到就按 C 算 —— 宁可保守，也不要把模型塞进系统盘。
+    let sys = std::env::var("SystemDrive")
+        .ok()
+        .and_then(|s| s.chars().next())
+        .unwrap_or('C')
+        .to_ascii_uppercase();
+
+    let mask = unsafe { GetLogicalDrives() };
+    let mut out = Vec::new();
+    for i in 0..26u32 {
+        if mask & (1 << i) == 0 {
+            continue;
+        }
+        let letter = (b'A' + i as u8) as char;
+        let root: Vec<u16> = format!("{letter}:\\").encode_utf16().chain([0]).collect();
+        let kind = unsafe { GetDriveTypeW(root.as_ptr()) };
+        let mut free = 0u64;
+        let (mut total, mut free_total) = (0u64, 0u64);
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(root.as_ptr(), &mut free, &mut total, &mut free_total)
+        };
+        out.push(Drive {
+            letter,
+            fixed: kind == DRIVE_FIXED,
+            system: letter == sys,
+            free: if ok != 0 { free } else { 0 },
+        });
+    }
+    out
+}
+
+#[cfg(not(windows))]
+pub fn list_drives() -> Vec<Drive> {
+    Vec::new()
+}
+
+/// 自动挑一个模型目录：**非系统盘根目录**下的 `wego-voice-models`。
+///
+/// 挑不到（单盘机器、空间不够）返回 `None`。
+pub fn auto_dir() -> Option<PathBuf> {
+    pick_drive(&list_drives(), NEED_FREE).map(|c| PathBuf::from(format!("{c}:\\{DIR_NAME}")))
+}
+
+/// 定下模型目录。
+///
+/// 顺序：
+/// 1. 配置里钉过的位置 —— 用户改过或上次自动挑的，**优先**
+/// 2. 自动挑一个非系统盘的根目录，并钉下来
+/// 3. 都不行就退回应用数据目录
+///
+/// 钉下来这一步不是优化，是**正确性**：不钉的话，插一次移动硬盘就
+/// 可能换个盘，而用户看到的是模型莫名其妙又要重下一遍。
+pub fn resolve_dir(config_dir: &Path, app_data: &Path) -> PathBuf {
+    let pin = config_dir.join(PIN_FILE);
+    if let Ok(t) = std::fs::read_to_string(&pin) {
+        let t = t.trim();
+        if !t.is_empty() {
+            return PathBuf::from(t);
+        }
+    }
+    let chosen = auto_dir().unwrap_or_else(|| app_data.join("models"));
+    // 写不进去也不致命 —— 下次再挑一遍，结果通常一样
+    let _ = std::fs::create_dir_all(config_dir);
+    let _ = std::fs::write(&pin, chosen.to_string_lossy().as_bytes());
+    chosen
+}
+
+/// 应用数据目录下的兜底位置。单盘机器、或者自动挑失败时用。
 pub fn dir(app_data: &Path) -> PathBuf {
     app_data.join("models")
 }
@@ -152,8 +280,8 @@ impl Status {
 }
 
 /// 扫一遍目录。**只看大小，不算哈希** —— 后者要读几百 MB。
-pub fn status(app_data: &Path) -> Status {
-    let d = dir(app_data);
+pub fn status(d: &Path) -> Status {
+    let d = d.to_path_buf();
     let items = ASSETS
         .iter()
         .map(|a| {
@@ -176,10 +304,9 @@ pub fn status(app_data: &Path) -> Status {
 /// 逐个算哈希。**慢**（要读几百 MB），只在用户主动点"校验"或者
 /// 推理失败之后才跑。
 pub fn verify_all(
-    app_data: &Path,
+    d: &Path,
     mut progress: impl FnMut(&str, f32) -> bool,
 ) -> Result<Vec<(Asset, State)>> {
-    let d = dir(app_data);
     let mut out = Vec::new();
     for a in ASSETS {
         let p = d.join(a.name);
@@ -405,7 +532,7 @@ mod tests {
     #[test]
     fn empty_dir_reports_everything_missing() {
         let d = tmp("empty");
-        let s = status(&d);
+        let s = status(&dir(&d));
         assert!(!s.ready());
         assert!(!s.companion);
         assert_eq!(s.items.len(), ASSETS.len());
@@ -425,7 +552,7 @@ mod tests {
         let d = tmp("short");
         let a = ASSETS[0];
         std::fs::write(dir(&d).join(a.name), b"only a few bytes").unwrap();
-        let s = status(&d);
+        let s = status(&dir(&d));
         let st = &s.items.iter().find(|(x, _)| x.name == a.name).unwrap().1;
         assert!(matches!(st, State::Incomplete { have: 16 }), "{st:?}");
         assert!(!st.usable());
@@ -465,6 +592,104 @@ mod tests {
         std::fs::write(&p, vec![7u8; 4 << 20]).unwrap();
         let got = sha256_file(&p, |_| false).unwrap();
         assert!(got.is_none(), "取消之后不该返回哈希");
+    }
+
+    fn drive(letter: char, fixed: bool, system: bool, free_gb: u64) -> Drive {
+        Drive { letter, fixed, system, free: free_gb * 1024 * 1024 * 1024 }
+    }
+
+    /// ⚠️ 非系统盘优先，**哪怕它空间更小**。
+    ///
+    /// 几百 MB 压在通常更小的系统盘上，是这条规则存在的全部理由 ——
+    /// 所以"C 盘空间更多"不能成为选 C 的理由。
+    #[test]
+    fn a_data_drive_wins_even_with_less_space() {
+        let ds = [drive('C', true, true, 500), drive('D', true, false, 50)];
+        assert_eq!(pick_drive(&ds, NEED_FREE), Some('D'));
+    }
+
+    /// 多个非系统盘时选空间最多的。
+    #[test]
+    fn among_data_drives_the_roomiest_wins() {
+        let ds = [
+            drive('C', true, true, 500),
+            drive('D', true, false, 50),
+            drive('E', true, false, 300),
+        ];
+        assert_eq!(pick_drive(&ds, NEED_FREE), Some('E'));
+    }
+
+    /// ⚠️ U 盘、网络盘、光驱一律不选。
+    ///
+    /// 拔掉之后的表现是模型"丢了" —— 而用户完全想不到是因为拔了 U 盘。
+    #[test]
+    fn removable_and_network_drives_are_never_chosen() {
+        let ds = [
+            drive('C', true, true, 200),
+            drive('E', false, false, 900), // U 盘，空间再大也不选
+        ];
+        assert_eq!(pick_drive(&ds, NEED_FREE), Some('C'), "只剩系统盘时才退回它");
+    }
+
+    /// 空间不够的盘跳过。
+    #[test]
+    fn a_full_drive_is_skipped() {
+        let ds = [drive('C', true, true, 100), drive('D', true, false, 1)];
+        assert_eq!(pick_drive(&ds, NEED_FREE), Some('C'));
+    }
+
+    /// 单盘机器：退回系统盘（调用方再退回应用数据目录）。
+    #[test]
+    fn a_single_drive_machine_falls_back_to_the_system_drive() {
+        let ds = [drive('C', true, true, 100)];
+        assert_eq!(pick_drive(&ds, NEED_FREE), Some('C'));
+    }
+
+    /// 全都不合格就交白卷，让调用方退回应用数据目录。
+    #[test]
+    fn nothing_usable_returns_none() {
+        let ds = [drive('C', true, true, 1), drive('E', false, false, 900)];
+        assert_eq!(pick_drive(&ds, NEED_FREE), None);
+    }
+
+    /// ⚠️ 位置必须被钉住。
+    ///
+    /// 不钉的话，插一次移动硬盘就可能换个盘，而用户看到的是
+    /// **模型莫名其妙又要重下一遍**。
+    #[test]
+    fn the_location_is_pinned_and_honoured() {
+        let base = tmp("pin");
+        let cfg = base.join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::write(cfg.join(PIN_FILE), r"Z:\somewhere\models").unwrap();
+        assert_eq!(
+            resolve_dir(&cfg, &base),
+            PathBuf::from(r"Z:\somewhere\models"),
+            "钉过的位置没被采纳"
+        );
+    }
+
+    /// 第一次解析要把结果写下来 —— 否则下次开机可能挑到别的盘。
+    #[test]
+    fn the_first_resolve_writes_the_pin() {
+        let base = tmp("pin-write");
+        let cfg = base.join("cfg");
+        let got = resolve_dir(&cfg, &base);
+        let pinned = std::fs::read_to_string(cfg.join(PIN_FILE)).expect("没写下钉住的位置");
+        assert_eq!(pinned.trim(), got.to_string_lossy());
+        assert!(!pinned.trim().is_empty());
+    }
+
+    /// 钉住的文件是空的（用户清空了）→ 当作没钉过，重新挑。
+    #[test]
+    fn an_empty_pin_is_ignored() {
+        let base = tmp("pin-empty");
+        let cfg = base.join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::write(cfg.join(PIN_FILE), "   \n  ").unwrap();
+        let got = resolve_dir(&cfg, &base);
+        assert!(!got.as_os_str().is_empty());
+        assert_ne!(got, PathBuf::from("   \n  "));
     }
 
     /// 资产表本身要自洽：哈希是 64 位十六进制、体积非零、名字不重复。

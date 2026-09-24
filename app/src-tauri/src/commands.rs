@@ -673,27 +673,30 @@ pub struct CloneStatus {
     pub error: Option<String>,
 }
 
-/// 资产目录：`<应用数据目录>/models/`。
+/// 模型目录。
+///
+/// 默认落在**非系统盘的根目录**下（`D:\wego-voice-models` 之类）：
+/// 模型加推理程序约 445 MB，压在通常更小的系统盘上没有道理。
+///
+/// 选中的位置会被**钉在配置里**。不钉的话，插一次移动硬盘就可能换个盘，
+/// 而用户看到的是模型莫名其妙又要重下一遍。
+/// 想换位置就改那个文件（`models-dir.txt`），不必重装。
 fn models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     use tauri::Manager;
-    let base = app
+    let data = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("取应用数据目录失败：{e}"))?;
-    Ok(voice_neural::assets::dir(&base))
-}
-
-fn app_data(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    use tauri::Manager;
-    app.path()
-        .app_data_dir()
-        .map_err(|e| format!("取应用数据目录失败：{e}"))
+    let cfg = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("取配置目录失败：{e}"))?;
+    Ok(voice_neural::assets::resolve_dir(&cfg, &data))
 }
 
 #[tauri::command]
 pub fn clone_status(app: tauri::AppHandle, state: State<AppState>) -> Result<CloneStatus, String> {
-    let base = app_data(&app)?;
-    let st = voice_neural::assets::status(&base);
+    let st = voice_neural::assets::status(&models_dir(&app)?);
     let j = state.clone_job();
     Ok(CloneStatus {
         ready: st.ready(),

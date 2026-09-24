@@ -562,11 +562,16 @@ function CloneBlock({
             <li key={m}>{m}</li>
           ))}
         </ul>
-        {/* 自动下载还没做 —— 如实说，并把路径给到手 */}
+        {/* 自动下载还没做 —— 如实说，并把路径给到手。
+            位置默认在**非系统盘根目录**：445 MB 压在通常更小的系统盘上
+            没有道理。选中的盘会被钉住，不会因为插了移动硬盘就换地方。 */}
         <p className="hint dim">
           自动下载还没做。把上面这些文件放进：
           <br />
           <span className="mono">{status.dir}</span>
+          <br />
+          这个位置是自动选的 —— <b>非系统盘里空间最多的那个</b>，
+          U 盘与网络盘不参与。选中之后会记住，不会因为插了移动硬盘就换地方。
         </p>
         <div className="clone-act">
           <button className="btn" onClick={() => api.cloneRevealModels()} type="button">
