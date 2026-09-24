@@ -48,6 +48,10 @@
 /// 这种东西不能藏在一个平时不编译的特性后面。
 pub mod features;
 
+/// 激励信号生成。同样不依赖 onnx —— 它只由 f0 决定，不含任何权重，
+/// 是整个解码器里唯一能在没有模型时完整验证的部分。
+pub mod source;
+
 #[cfg(feature = "onnx")]
 pub mod encoder;
 

@@ -20,14 +20,20 @@ use std::path::{Path, PathBuf};
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    // onnxruntime.dll 的位置。产品里它跟模型一起躺在 APPDATA；
-    // 开发时用环境变量指过去。
-    let dll = std::env::var("WEGO_ORT_DLL")
-        .map(PathBuf::from)
-        .map_err(|_| anyhow::anyhow!(
-            "请用环境变量 WEGO_ORT_DLL 指向 onnxruntime.dll"
-        ))?;
-    voice_neural::session::init(&dll)?;
+    // 后端二选一：tract（纯 Rust，静态链接）或 ONNX Runtime（外挂 DLL）。
+    #[cfg(feature = "tract")]
+    {
+        voice_neural::session::init_pure_rust();
+        eprintln!("[后端] tract（纯 Rust，无 DLL）");
+    }
+    #[cfg(not(feature = "tract"))]
+    {
+        let dll = std::env::var("WEGO_ORT_DLL")
+            .map(PathBuf::from)
+            .map_err(|_| anyhow::anyhow!("请用环境变量 WEGO_ORT_DLL 指向 onnxruntime.dll"))?;
+        voice_neural::session::init(&dll)?;
+        eprintln!("[后端] ONNX Runtime（{}）", dll.display());
+    }
 
     match args.get(1).map(String::as_str) {
         Some("inspect") => {
@@ -40,9 +46,9 @@ fn main() -> Result<()> {
             features(&m, &w)
         }
         Some("encode") => {
-            let m: PathBuf = args.get(2).context("用法：wego-neural encode <模型.onnx> <干声.wav>")?.into();
+            let m: PathBuf = args.get(2).context("用法：wego-neural encode <模型.onnx> <干声.wav> [落盘.f32]")?.into();
             let w: PathBuf = args.get(3).context("缺少 WAV 路径")?.into();
-            encode(&m, &w)
+            encode(&m, &w, args.get(4).map(PathBuf::from).as_deref())
         }
         _ => {
             println!("{}", include_str!("../../README.txt"));
@@ -61,7 +67,7 @@ fn inspect(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn encode(model: &Path, wav: &Path) -> Result<()> {
+fn encode(model: &Path, wav: &Path, dump: Option<&Path>) -> Result<()> {
     let mut enc = voice_neural::encoder::ContentEncoder::open(model, 2)?;
     println!("═══ 内容编码器 ═══");
     print!("{}", enc.contract().describe());
@@ -97,6 +103,17 @@ fn encode(model: &Path, wav: &Path) -> Result<()> {
     if (max - min).abs() < 1e-6 {
         bail!("特征是常数（min==max）—— 多半喂进去的是静音，或者重采样坏了");
     }
+    // 落盘是为了**逐元素**比对两个后端。统计量一样只能说明"没明显坏掉"，
+    // 说明不了两条实现算的是同一个东西。
+    if let Some(p) = dump {
+        let mut bytes = Vec::with_capacity(feat.data.len() * 4);
+        for v in &feat.data {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        std::fs::write(p, &bytes)?;
+        println!("已落盘 {} —— {} 个 f32", p.display(), feat.data.len());
+    }
+
     println!("\n✅ 编码器跑通");
     Ok(())
 }

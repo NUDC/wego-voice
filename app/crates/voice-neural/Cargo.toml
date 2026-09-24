@@ -19,6 +19,11 @@ license.workspace = true
 default = []
 onnx = ["dep:ort"]
 
+# 用 tract（纯 Rust 推理引擎）顶替 ONNX Runtime。
+# `alternative-backend` 让 ort 不去链接微软的实现，改用我们注入的 C API。
+# 调用代码一行不改 —— 只是启动时换一句初始化。
+tract = ["onnx", "dep:ort-tract", "ort/alternative-backend"]
+
 [dependencies]
 anyhow.workspace = true
 voice-core = { path = "../voice-core" }
@@ -31,6 +36,7 @@ voice-core = { path = "../voice-core" }
 #
 # 代价是启动时要显式告诉它 DLL 在哪，见 `session::init`。
 ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic"], optional = true }
+ort-tract = { version = "0.4", optional = true }
 
 [[bin]]
 name = "wego-neural"
