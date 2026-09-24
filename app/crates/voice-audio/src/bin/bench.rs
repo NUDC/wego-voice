@@ -25,7 +25,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args as ClapArgs, Parser, Subcommand};
 use voice_audio::{
     list_devices, parse_key, thresholds, AudioEngine, BackendKind, EngineConfig, LatencyStats,
@@ -85,16 +85,6 @@ enum Cmd {
         duration: f32,
     },
 
-    /// 离线量 DSP 成本，不碰声卡
-    ///
-    /// # 为什么需要这个
-    ///
-    /// `soak` 用的是真实麦克风输入。没人对着麦克风唱的时候信号判为清音，
-    /// PSOLA 走透传、`overlap_add` 一次都不执行 —— 于是 soak 测出来的
-    /// "CPU 占用"跟 DSP 的真实成本**毫无关系**。
-    ///
-    /// 这个子命令喂合成浊音，逼着走完整的分析+合成路径，
-    /// 是唯一能把"某个参数贵不贵"量准的地方。
     /// 离线重新校准一个 WAV
     ///
     /// 实时链路被 30ms 预算捆着：不能回看、f0 只能因果、PSOLA 窗口被
@@ -125,6 +115,16 @@ enum Cmd {
         source: String,
     },
 
+    /// 离线量 DSP 成本，不碰声卡
+    ///
+    /// # 为什么需要这个
+    ///
+    /// `soak` 用的是真实麦克风输入。没人对着麦克风唱的时候信号判为清音，
+    /// PSOLA 走透传、`overlap_add` 一次都不执行 —— 于是 soak 测出来的
+    /// "CPU 占用"跟 DSP 的真实成本**毫无关系**。
+    ///
+    /// 这个子命令喂合成浊音，逼着走完整的分析+合成路径，
+    /// 是唯一能把"某个参数贵不贵"量准的地方。
     Dsp {
         /// 模拟多少秒的音频
         #[arg(short, long, default_value_t = 30.0)]
@@ -133,6 +133,19 @@ enum Cmd {
         /// 每块多少帧。用设备实际块大小才有可比性。
         #[arg(long, default_value_t = 144)]
         block: usize,
+    },
+
+    /// f0 检测准确度评测（合成素材，真值已知）
+    ///
+    /// "换个神经网络会更准"是信念，不是测量。这条命令给出基线：
+    /// 每种失败模式一段素材，按 MIR 的标准指标打分。
+    /// 任何新的检测器都插进同一个台子，出来的是数，不是感觉。
+    ///
+    /// 采样率用全局的 `--rate`。
+    F0 {
+        /// 只看某一段素材，并打印误差分布与连续错段长度
+        #[arg(long)]
+        detail: Option<String>,
     },
 }
 
@@ -347,6 +360,8 @@ fn main() -> Result<()> {
         Cmd::Timbre { reference, source } => timbre_report(&reference, &source),
 
         Cmd::Recorrect { input, output } => recorrect_file(&cli.audio, &input, &output),
+
+        Cmd::F0 { detail } => f0_report(cli.audio.rate as f32, detail.as_deref()),
     }
 }
 
@@ -1117,6 +1132,173 @@ fn buffer_sweep(args: &Args) -> Result<()> {
             Some(f) => println!("  推荐缓冲大小：{f} 帧（最小的无 xrun 值）"),
             None => println!("  ❌ 所有缓冲大小都有欠载。先查实时优先级是否提权成功。"),
         }
+    }
+    Ok(())
+}
+
+
+/// f0 检测准确度评测。
+///
+/// # 为什么要有这个
+///
+/// 下一步是接神经 f0（RMVPE）。它的报价是 **361 MB 模型**，装进一个
+/// 6.5 MB 的免安装 exe 里 —— 这个代价必须有数支撑，不能靠"听着像"。
+///
+/// 这里量的是现有的 YIN 路径，分两档：**逐帧原始**与**加了后处理**。
+/// 两档一起报，是因为「后处理值多少」本身也是个被假设而没被量过的东西。
+fn f0_report(rate: f32, detail: Option<&str>) -> Result<()> {
+    use voice_core::f0eval::{probes, score, Frame};
+
+    if let Some(name) = detail {
+        return f0_detail(rate, name);
+    }
+
+    let window = voice_core::offline::analysis_window(rate);
+    println!("═══ f0 检测准确度（合成素材，真值已知）═══\n");
+    println!("采样率 {rate} Hz · 步进 {} 样本 · 分析窗 {window} 样本（{:.1} ms）\n",
+             voice_core::offline::HOP, window as f32 / rate * 1000.0);
+    println!("RPA = ±50 音分内的比例；RCA = 折叠八度后的同一指标。");
+    println!("**RCA 比 RPA 高多少，就是八度错误吃掉了多少。**\n");
+
+    let mut rows: Vec<(&str, &str, f32, f32, f32, f32, f32, f32, f32, bool)> = Vec::new();
+
+    for p in probes(rate) {
+        let raw = voice_core::offline::track_pitch_raw(&p.samples, rate, |_| true)
+            .context("原始检测返回 None")?;
+        let post = voice_core::track_pitch(&p.samples, rate, |_| true)
+            .context("后处理检测返回 None")?;
+
+        let to_frames = |t: &voice_core::PitchTrack| -> Vec<Frame> {
+            t.frames
+                .iter()
+                .enumerate()
+                .map(|(i, f)| Frame {
+                    window_end: i * t.hop + t.hop,
+                    f0: f.f0,
+                    voiced: f.voiced,
+                })
+                .collect()
+        };
+
+        let a = score(&p.truth, &to_frames(&raw), window);
+        let b = score(&p.truth, &to_frames(&post), window);
+        rows.push((p.name, p.what, a.rpa, b.rpa, b.rca, b.octave_error,
+                   b.voicing_recall, b.voicing_false_alarm, b.median_cents, p.informational));
+    }
+
+    println!("{:<9} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7} {:>8}",
+             "素材", "RPA原始", "RPA后处理", "RCA", "八度错", "召回", "虚警", "中位误差");
+    println!("{}", "─".repeat(66));
+    for (name, _, rpa_raw, rpa, rca, oct, recall, fa, med, info) in &rows {
+        if *info {
+            // 参考项：正确行为就是一个音高都不报，打分没有意义
+            println!("{name:<9} {:>8} {:>10} {:>7} {:>7} {:>6.1}% {:>6.1}%   （参考）",
+                     "—", "—", "—", "—", recall * 100.0, fa * 100.0);
+            continue;
+        }
+        println!("{:<9} {:>7.1}% {:>9.1}% {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}% {:>7.1}¢",
+                 name, rpa_raw * 100.0, rpa * 100.0, rca * 100.0,
+                 oct * 100.0, recall * 100.0, fa * 100.0, med);
+    }
+
+    // 参考项不计入平均分
+    let scored: Vec<_> = rows.iter().filter(|r| !r.9).collect();
+    let n = scored.len() as f32;
+    let mean = |f: fn(&&(&str, &str, f32, f32, f32, f32, f32, f32, f32, bool)) -> f32| -> f32 {
+        scored.iter().map(f).sum::<f32>() / n
+    };
+    println!("{}", "─".repeat(66));
+    println!("{:<9} {:>7.1}% {:>9.1}% {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}%   （{} 段，不含参考项）",
+             "平均", mean(|r| r.2) * 100.0, mean(|r| r.3) * 100.0, mean(|r| r.4) * 100.0,
+             mean(|r| r.5) * 100.0, mean(|r| r.6) * 100.0, mean(|r| r.7) * 100.0, scored.len());
+
+    println!("\n素材说明：");
+    for (name, what, ..) in &rows {
+        println!("  {name:<9} {what}");
+    }
+    Ok(())
+}
+
+
+/// 某一段素材的误差解剖。
+///
+/// 平均分只说明"有问题"，说不清**是哪一种**问题。
+/// 八度错是偏高还是偏低、是零星几帧还是连成一片 —— 这两件事
+/// 指向完全不同的修法：零星的靠邻域中值就能捞回来，
+/// 连成一片的捞不回来（中值本身也错了）。
+fn f0_detail(rate: f32, name: &str) -> Result<()> {
+    use voice_core::f0eval::probes;
+
+    let p = probes(rate)
+        .into_iter()
+        .find(|p| p.name == name)
+        .with_context(|| format!("没有叫 {name} 的素材"))?;
+    let window = voice_core::offline::analysis_window(rate);
+    let track = voice_core::track_pitch(&p.samples, rate, |_| true).context("检测失败")?;
+
+    let mut buckets: std::collections::BTreeMap<i32, usize> = Default::default();
+    let mut wrong_runs: Vec<usize> = Vec::new();
+    let mut run = 0usize;
+
+    for (i, f) in track.frames.iter().enumerate() {
+        let end = (i * track.hop + track.hop).min(p.truth.len());
+        let start = end.saturating_sub(window);
+        let win = &p.truth[start..end];
+        if win.is_empty() || win.iter().any(|v| *v <= 0.0) || !f.voiced || f.f0 <= 0.0 {
+            continue;
+        }
+        let reference =
+            (win.iter().map(|v| v.log2()).sum::<f32>() / win.len() as f32).exp2();
+        let cents = 1200.0 * (f.f0 / reference).log2();
+        // 按半音取整分桶，看误差集中在哪
+        *buckets.entry((cents / 100.0).round() as i32).or_default() += 1;
+
+        if cents.abs() > 50.0 {
+            run += 1;
+        } else if run > 0 {
+            wrong_runs.push(run);
+            run = 0;
+        }
+    }
+    if run > 0 {
+        wrong_runs.push(run);
+    }
+
+    println!("═══ {name} 的误差解剖 ═══\n");
+    println!("{}", p.what);
+    println!("\n误差分布（半音 → 帧数）：");
+    let total: usize = buckets.values().sum();
+    for (semi, n) in &buckets {
+        if *n * 200 < total {
+            continue; // 只列占比 ≥0.5% 的桶
+        }
+        let bar = "█".repeat((*n * 40 / total.max(1)).max(1));
+        let tag = match semi {
+            0 => "  ← 正确",
+            -12 => "  ← 低了整八度（减半）",
+            12 => "  ← 高了整八度（倍频）",
+            -19 => "  ← 低了十二度（÷3）",
+            19 => "  ← 高了十二度（×3）",
+            _ => "",
+        };
+        println!("  {semi:>+4} 半音 {n:>5} 帧 {bar}{tag}");
+    }
+
+    wrong_runs.sort_unstable();
+    let frames_wrong: usize = wrong_runs.iter().sum();
+    println!("\n错帧连续性：");
+    println!("  错帧总数   {frames_wrong} / {total}");
+    println!("  错段数     {}", wrong_runs.len());
+    if !wrong_runs.is_empty() {
+        let hop_ms = track.hop as f32 / rate * 1000.0;
+        let med = wrong_runs[wrong_runs.len() / 2];
+        let max = *wrong_runs.last().unwrap();
+        println!("  段长中位数 {med} 帧（{:.0} ms）", med as f32 * hop_ms);
+        println!("  最长一段   {max} 帧（{:.0} ms）", max as f32 * hop_ms);
+        println!(
+            "\n  邻域中值窗口是 ±12 帧（约 ±32 ms）。错段长于它时，\n  \
+             中值本身就落在错的那一侧 —— 现在的八度纠错捞不回来。"
+        );
     }
     Ok(())
 }

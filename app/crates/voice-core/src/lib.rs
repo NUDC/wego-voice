@@ -26,6 +26,7 @@
 //! let frame = c.last_frame();     // 供 UI 显示
 //! ```
 
+pub mod f0eval;
 pub mod fft;
 pub mod noise;
 pub mod offline;

@@ -94,6 +94,23 @@ impl PitchTrack {
 pub fn track_pitch(
     samples: &[f32],
     sample_rate: f32,
+    progress: impl FnMut(f32) -> bool,
+) -> Option<PitchTrack> {
+    let mut track = track_pitch_raw(samples, sample_rate, progress)?;
+    track.octave_fixes = fix_octaves(&mut track.frames);
+    median_filter(&mut track.frames);
+    track.gap_fills = fill_gaps(&mut track.frames);
+    Some(track)
+}
+
+/// 只做逐帧检测，**不做任何后处理**。
+///
+/// 单独留一个口子是为了能量出"后处理到底值多少" ——
+/// 八度纠错、中值滤波、补洞这三步的收益，只有拿同一段素材
+/// 跑两遍（有/无后处理）对比才说得清。见 `wego-bench f0`。
+pub fn track_pitch_raw(
+    samples: &[f32],
+    sample_rate: f32,
     mut progress: impl FnMut(f32) -> bool,
 ) -> Option<PitchTrack> {
     let mut yin = Yin::new(YinConfig { sample_rate, ..Default::default() });
@@ -127,20 +144,19 @@ pub fn track_pitch(
         }
     }
 
-    let mut track = PitchTrack {
+    progress(1.0);
+    Some(PitchTrack {
         frames,
         hop: HOP,
         sample_rate,
         octave_fixes: 0,
         gap_fills: 0,
-    };
+    })
+}
 
-    track.octave_fixes = fix_octaves(&mut track.frames);
-    median_filter(&mut track.frames);
-    track.gap_fills = fill_gaps(&mut track.frames);
-
-    progress(1.0);
-    Some(track)
+/// 分析窗长度（样本）。评测时真值要在同样的窗口上取平均才可比。
+pub fn analysis_window(sample_rate: f32) -> usize {
+    Yin::new(YinConfig { sample_rate, ..Default::default() }).required_len()
 }
 
 /// 八度纠错。

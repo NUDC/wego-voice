@@ -230,6 +230,8 @@ impl Yin {
             }
         }
 
+        best_tau = self.undo_subharmonic(best_tau);
+
         let aperiodicity = self.cmnd[best_tau];
         // 放宽一档作为清浊判据：阈值内必浊，远高于阈值则判清音
         let is_voiced = aperiodicity < self.cfg.threshold * 2.0;
@@ -243,6 +245,71 @@ impl Yin {
             aperiodicity,
             is_voiced,
         }
+    }
+
+    /// 次谐波回收：把被噪声压到 2τ / 3τ 上的估计拉回真实周期。
+    ///
+    /// # 这是量出来的，不是猜的
+    ///
+    /// `wego-bench f0` 在 6 dB 信噪比（有空调/风扇的房间）下测到 24% 的帧
+    /// 差了整八度或十二度，而误差**全部朝下**：−12 半音 188 帧、−19 半音 73 帧，
+    /// 朝上的一帧都没有。
+    ///
+    /// 成因是步骤 4 的"第一个跌破阈值"：噪声把真周期处的谷填浅了，跨不过
+    /// 0.15，扫描就继续往大 tau 走；而 CMND 的累积均值归一化让 d′ 随 tau
+    /// 增大而系统性变小，于是 2τ、3τ 反而先跌破 —— 正好是朝下的方向。
+    ///
+    /// 离线的邻域中值救不了：实测错段中位数 13 帧、最长 83 帧，
+    /// 而中值窗口只有 ±12 帧 —— 中值本身就落在错的那一侧。
+    /// 所以必须在这里修，而不是在后处理里。
+    ///
+    /// 判据是**单向**的（只往高频方向捞），因为观测到的错误是单向的。
+    /// 双向检查会凭空引入朝上的八度错误，那是拿一种病换另一种病。
+    fn undo_subharmonic(&self, tau: usize) -> usize {
+        /// 候选谷必须至少这么"像个周期"。纯粹的次谐波位置 d′ 会很高，
+        /// 这一道就把它们挡住了。
+        const CANDIDATE_MAX: f32 = 0.45;
+        /// 候选可以比当前选择差多少倍仍被采纳。
+        ///
+        /// 必须 > 1.0：真周期处的谷被噪声填浅了，正是它**比**次谐波差的原因；
+        /// 要求"必须更好"就等于什么都不做。实测 `TOLERANCE=1.0` 时
+        /// noisy6 的 RPA 停在 66.8%，1.2 起跳到 100%。
+        ///
+        /// ⚠️ 扫描结果：1.2 / 1.6 / 2.2 / 3.0 在现有素材上**成绩完全一样**，
+        /// `CANDIDATE_MAX` 从 0.35 到 0.90 也一样。也就是说这两个常数
+        /// 坐在一片很宽的平台上，**现有素材钉不住它们的上界** ——
+        /// 取 1.6 是取平台中段，不是因为量出了最优值。
+        /// 真嗓子上会不会在某处翻车，这套合成素材回答不了。
+        const TOLERANCE: f32 = 1.6;
+
+        let here = self.cmnd[tau];
+        // 先试 ÷3 再试 ÷2：取最高的那个合法候选，避免只回收一半
+        for k in [3usize, 2] {
+            let cand = tau / k;
+            if cand < self.tau_min {
+                continue;
+            }
+            // 谐波关系不会精确到样本，在邻域里找真正的谷底
+            let radius = (cand / 50).max(2);
+            let lo = cand.saturating_sub(radius).max(self.tau_min);
+            let hi = (cand + radius).min(self.tau_max);
+            let mut best = lo;
+            for t in lo..=hi {
+                if self.cmnd[t] < self.cmnd[best] {
+                    best = t;
+                }
+            }
+            // 必须是**局部极小**，不能只是某段下坡上的一点
+            let is_min = best > 0
+                && best < self.tau_max
+                && self.cmnd[best] <= self.cmnd[best - 1]
+                && self.cmnd[best] <= self.cmnd[best + 1];
+
+            if is_min && self.cmnd[best] < CANDIDATE_MAX && self.cmnd[best] <= here * TOLERANCE {
+                return best;
+            }
+        }
+        tau
     }
 
     /// 在 `tau` 附近对 CMND 做抛物线拟合，返回亚采样精度的极小点。
@@ -277,6 +344,78 @@ mod tests {
 
     fn sine(freq: f32, sr: f32, n: usize) -> Vec<f32> {
         (0..n).map(|i| (TAU * freq * i as f32 / sr).sin()).collect()
+    }
+
+    /// 带噪声的浊音不许被判成低八度/低十二度。
+    ///
+    /// ⚠️ 回归测试。`wego-bench f0` 在 6 dB 信噪比下量到 24% 的帧偏低，
+    /// 而且**全部朝下**（减半 188 帧、÷3 73 帧，朝上零帧）——
+    /// 成因是 CMND 的累积均值归一化让 d′ 随 tau 系统性变小，
+    /// 于是噪声下 2τ、3τ 反而先跌破绝对阈值。
+    ///
+    /// 离线的邻域中值救不了：错段中位数 13 帧，而中值窗口只有 ±12 帧。
+    #[test]
+    fn noise_must_not_drag_the_estimate_down_an_octave() {
+        const SR: f32 = 48_000.0;
+        let mut yin = Yin::new(YinConfig { sample_rate: SR, ..Default::default() });
+        let n = yin.required_len();
+
+        for f0 in [110.0f32, 165.0, 220.0, 330.0] {
+            // 谐波堆 + 噪声，近似 6 dB 信噪比
+            let mut x: Vec<f32> = (0..n)
+                .map(|i| {
+                    let t = i as f32 / SR;
+                    (1..=12)
+                        .map(|k| (TAU * f0 * k as f32 * t).sin() / k as f32)
+                        .sum::<f32>()
+                })
+                .collect();
+            let rms = (x.iter().map(|v| v * v).sum::<f32>() / n as f32).sqrt();
+            let mut st = 0x9E3779B97F4A7C15u64;
+            for v in x.iter_mut() {
+                st ^= st << 13;
+                st ^= st >> 7;
+                st ^= st << 17;
+                *v += (((st >> 40) as f32 / 8_388_608.0) - 1.0) * rms * 0.5;
+            }
+
+            let est = yin.analyze(&x);
+            assert!(est.is_voiced, "{f0} Hz + 噪声被判成清音");
+            let cents = 1200.0 * (est.f0_hz / f0).log2();
+            assert!(
+                cents > -600.0,
+                "{f0} Hz 被拖低了 {cents:.0} 音分（估计 {:.1} Hz）—— 次谐波回收失效",
+                est.f0_hz
+            );
+            assert!(cents.abs() < 60.0, "{f0} Hz 估成了 {:.1} Hz", est.f0_hz);
+        }
+    }
+
+    /// 次谐波回收**不许**把真实低音顶上去。
+    ///
+    /// 这是上一条的反向风险：判据放松过头，85 Hz 的半周期会被当成基频。
+    #[test]
+    fn a_genuinely_low_voice_is_not_pushed_up_an_octave() {
+        const SR: f32 = 48_000.0;
+        let mut yin = Yin::new(YinConfig { sample_rate: SR, ..Default::default() });
+        let n = yin.required_len();
+        for f0 in [80.0f32, 85.0, 98.0] {
+            let x: Vec<f32> = (0..n)
+                .map(|i| {
+                    let t = i as f32 / SR;
+                    (1..=20)
+                        .map(|k| (TAU * f0 * k as f32 * t).sin() / k as f32)
+                        .sum::<f32>()
+                })
+                .collect();
+            let est = yin.analyze(&x);
+            let cents = 1200.0 * (est.f0_hz / f0).log2();
+            assert!(
+                cents < 600.0,
+                "{f0} Hz 被顶高了 {cents:.0} 音分（估计 {:.1} Hz）",
+                est.f0_hz
+            );
+        }
     }
 
     /// 带谐波的信号更接近真实人声，也更容易诱发倍频错误。
