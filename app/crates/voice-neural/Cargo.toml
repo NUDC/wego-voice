@@ -24,6 +24,10 @@ onnx = ["dep:ort"]
 # 调用代码一行不改 —— 只是启动时换一句初始化。
 tract = ["onnx", "dep:ort-tract", "ort/alternative-backend"]
 
+# 解码器网络。用 candle 而不是 ort，因为它要**训练** —— ort 没有梯度。
+# 推理与训练共用同一份实现，避免"同一个模型写两遍"。
+candle = ["dep:candle-core", "dep:candle-nn"]
+
 [dependencies]
 anyhow.workspace = true
 voice-core = { path = "../voice-core" }
@@ -37,6 +41,8 @@ voice-core = { path = "../voice-core" }
 # 代价是启动时要显式告诉它 DLL 在哪，见 `session::init`。
 ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic"], optional = true }
 ort-tract = { version = "0.4", optional = true }
+candle-core = { version = "0.11", optional = true }
+candle-nn = { version = "0.11", optional = true }
 
 [[bin]]
 name = "wego-neural"

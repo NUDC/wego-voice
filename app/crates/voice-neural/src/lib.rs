@@ -55,6 +55,10 @@ pub mod source;
 /// 合成级：频域滤波 + 重建。同样不含权重，能验到底。
 pub mod synth;
 
+/// 解码器网络（带权重的那一半）。
+#[cfg(feature = "candle")]
+pub mod decoder;
+
 #[cfg(feature = "onnx")]
 pub mod encoder;
 

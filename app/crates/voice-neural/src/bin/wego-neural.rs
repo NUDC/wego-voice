@@ -36,6 +36,11 @@ fn main() -> Result<()> {
     }
 
     match args.get(1).map(String::as_str) {
+        #[cfg(feature = "candle")]
+        Some("keys") => {
+            let p: PathBuf = args.get(2).context("用法：wego-neural keys <检查点.pt>")?.into();
+            keys(&p)
+        }
         Some("inspect") => {
             let p: PathBuf = args.get(2).context("用法：wego-neural inspect <模型.onnx>")?.into();
             inspect(&p)
@@ -251,5 +256,28 @@ fn features(model: &Path, wav: &Path) -> Result<()> {
     anyhow::ensure!(a.volume.iter().all(|v| v.is_finite()), "音量里有非有限值");
     anyhow::ensure!(a.content.iter().all(|v| v.is_finite()), "内容特征里有非有限值");
     println!("\n✅ 三路等长、无非有限值");
+    Ok(())
+}
+
+
+/// 列出检查点里的参数名与形状。
+///
+/// # 为什么这是第一步
+///
+/// 「权重名跟代码里假设的对不上」是这类移植失败的大头，而症状是
+/// **能跑但声音怪**，不是报错。先把真实的名字打出来，
+/// 比对着写，比写完再调省十倍力气。
+#[cfg(feature = "candle")]
+fn keys(path: &Path) -> Result<()> {
+    let ks = voice_neural::decoder::dump_keys(path)?;
+    println!("═══ {} ═══", path.display());
+    println!("共 {} 个张量\n", ks.len());
+    let mut total = 0usize;
+    for (name, shape) in &ks {
+        let n: usize = shape.iter().product();
+        total += n;
+        println!("  {name:<52} {shape:?}");
+    }
+    println!("\n参数量 {:.2} M", total as f64 / 1e6);
     Ok(())
 }
