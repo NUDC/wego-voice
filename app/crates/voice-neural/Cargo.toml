@@ -1,0 +1,36 @@
+[package]
+name = "voice-neural"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# ⚠️ `ort`（ONNX Runtime）是**可选**的，默认关闭。
+#
+# 两个理由：
+#
+# 1. 打开它会把 ONNX Runtime 链进来，而主程序的卖点是 6.5 MB 免安装单文件。
+#    神经声线转换是**按需下载**的功能，不该让不用它的人付这个体积。
+# 2. 发版流水线跑 `cargo test --release --workspace`。把几十 MB 的
+#    运行时拖进每一次发版构建，只为编译一个还没接进产品的 crate，不划算。
+#
+# 开发时用：cargo build -p voice-neural --features onnx
+[features]
+default = []
+onnx = ["dep:ort"]
+
+[dependencies]
+anyhow.workspace = true
+
+# `load-dynamic`：**运行时**加载 onnxruntime.dll，不在构建期链进来。
+#
+# 两个好处，都关系到产品形态：
+# 1. 主程序体积不变。DLL（15.7 MB）随模型一起按需下载，不用它的人不付
+# 2. 构建期不下载、不链接大二进制 —— 发版流水线不受影响
+#
+# 代价是启动时要显式告诉它 DLL 在哪，见 `session::init`。
+ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic"], optional = true }
+
+[[bin]]
+name = "wego-neural"
+required-features = ["onnx"]

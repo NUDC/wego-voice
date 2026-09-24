@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/voice-core", "crates/voice-audio", "src-tauri"]
+members = ["crates/voice-core", "crates/voice-audio", "crates/voice-neural", "src-tauri"]
 
 [workspace.package]
 version = "0.1.3"

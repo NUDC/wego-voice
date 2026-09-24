@@ -1,0 +1,164 @@
+//! 神经件的检查工具。
+//!
+//! ```text
+//! wego-neural inspect <模型.onnx>     打印输入/输出契约
+//! wego-neural encode <模型.onnx> <干声.wav>   跑一遍内容编码器
+//! ```
+//!
+//! # 为什么先做这个
+//!
+//! 「权重/图的形状跟代码里假设的对不上」是这类项目失败的大头，
+//! 而症状是**声音怪**，不是报错 —— 几乎没法二分定位。
+//!
+//! 所以第一件事不是跑通推理，是把模型**到底长什么样**问出来，
+//! 写进契约检查里。之后任何一次换模型、换来源、下错文件，
+//! 都会在建会话那一刻以人话失败，而不是在听感上以玄学失败。
+
+use anyhow::{bail, Context, Result};
+use std::path::PathBuf;
+
+fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    // onnxruntime.dll 的位置。产品里它跟模型一起躺在 APPDATA；
+    // 开发时用环境变量指过去。
+    let dll = std::env::var("WEGO_ORT_DLL")
+        .map(PathBuf::from)
+        .map_err(|_| anyhow::anyhow!(
+            "请用环境变量 WEGO_ORT_DLL 指向 onnxruntime.dll"
+        ))?;
+    voice_neural::session::init(&dll)?;
+
+    match args.get(1).map(String::as_str) {
+        Some("inspect") => {
+            let p: PathBuf = args.get(2).context("用法：wego-neural inspect <模型.onnx>")?.into();
+            inspect(&p)
+        }
+        Some("encode") => {
+            let m: PathBuf = args.get(2).context("用法：wego-neural encode <模型.onnx> <干声.wav>")?.into();
+            let w: PathBuf = args.get(3).context("缺少 WAV 路径")?.into();
+            encode(&m, &w)
+        }
+        _ => {
+            println!("{}", include_str!("../../README.txt"));
+            Ok(())
+        }
+    }
+}
+
+fn inspect(path: &PathBuf) -> Result<()> {
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    println!("═══ {} ═══", path.display());
+    println!("文件大小 {:.1} MB\n", size as f64 / 1048576.0);
+
+    let (_session, contract) = voice_neural::session::open(path, 2)?;
+    print!("{}", contract.describe());
+    Ok(())
+}
+
+fn encode(model: &PathBuf, wav: &PathBuf) -> Result<()> {
+    let mut enc = voice_neural::encoder::ContentEncoder::open(model, 2)?;
+    println!("═══ 内容编码器 ═══");
+    print!("{}", enc.contract().describe());
+
+    let audio = read_wav_mono(wav)?;
+    println!(
+        "\n输入 {} —— {:.2} 秒 @ {} Hz",
+        wav.display(),
+        audio.samples.len() as f32 / audio.sample_rate as f32,
+        audio.sample_rate
+    );
+
+    let t0 = std::time::Instant::now();
+    let feat = enc.encode(&audio.samples, audio.sample_rate)?;
+    let dt = t0.elapsed().as_secs_f32();
+
+    let secs = audio.samples.len() as f32 / audio.sample_rate as f32;
+    println!(
+        "\n特征 {} 帧 × {} 维（{:.1} fps）",
+        feat.frames,
+        feat.dim,
+        feat.frames as f32 / secs
+    );
+    println!("耗时 {:.2} 秒（{:.1}× 实时）", dt, secs / dt.max(1e-6));
+
+    // 特征本身没法"看对不对"，但**明显坏掉**是看得出来的：
+    // 全零、全 NaN、方差为 0 —— 这几种都说明前面某处静默失败了。
+    let (min, max, mean, nan) = stats(&feat.data);
+    println!("\n取值 min {min:.3} / max {max:.3} / mean {mean:.3} / NaN {nan}");
+    if nan > 0 {
+        bail!("特征里有 {nan} 个 NaN —— 前面某处静默失败了");
+    }
+    if (max - min).abs() < 1e-6 {
+        bail!("特征是常数（min==max）—— 多半喂进去的是静音，或者重采样坏了");
+    }
+    println!("\n✅ 编码器跑通");
+    Ok(())
+}
+
+fn stats(v: &[f32]) -> (f32, f32, f32, usize) {
+    let nan = v.iter().filter(|x| !x.is_finite()).count();
+    let fin: Vec<f32> = v.iter().copied().filter(|x| x.is_finite()).collect();
+    if fin.is_empty() {
+        return (0.0, 0.0, 0.0, nan);
+    }
+    let min = fin.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = fin.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let mean = fin.iter().sum::<f32>() / fin.len() as f32;
+    (min, max, mean, nan)
+}
+
+struct Mono {
+    samples: Vec<f32>,
+    sample_rate: u32,
+}
+
+/// 只读 32-bit float / PCM 单声道 WAV —— 够用就行。
+///
+/// 刻意不依赖 `voice-audio`：那个 crate 拖着 WASAPI 和整条实时链路，
+/// 而这里只需要把一段波形读进来。
+fn read_wav_mono(path: &PathBuf) -> Result<Mono> {
+    let b = std::fs::read(path).with_context(|| format!("读取失败：{}", path.display()))?;
+    if b.len() < 44 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        bail!("不是 WAV 文件：{}", path.display());
+    }
+    let u16le = |at: usize| u16::from_le_bytes([b[at], b[at + 1]]);
+    let u32le = |at: usize| u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+
+    let (mut fmt, mut data) = (None, None);
+    let mut pos = 12usize;
+    while pos + 8 <= b.len() {
+        let id = &b[pos..pos + 4];
+        let size = u32le(pos + 4) as usize;
+        let body = pos + 8;
+        if id == b"fmt " && body + 16 <= b.len() {
+            fmt = Some((u16le(body), u16le(body + 2), u32le(body + 4), u16le(body + 14)));
+        } else if id == b"data" {
+            data = Some((body, size.min(b.len().saturating_sub(body))));
+        }
+        if body + size > b.len() {
+            break;
+        }
+        pos = body + size + (size & 1);
+    }
+    let (format, ch, rate, bits) = fmt.context("缺少 fmt chunk")?;
+    let (off, len) = data.context("缺少 data chunk")?;
+    let ch = ch.max(1) as usize;
+    let bytes = (bits / 8).max(1) as usize;
+
+    let frames = len / (bytes * ch);
+    let mut out = Vec::with_capacity(frames);
+    for f in 0..frames {
+        let mut acc = 0.0f32;
+        for c in 0..ch {
+            let p = off + (f * ch + c) * bytes;
+            acc += match (format, bits) {
+                (1, 16) => i16::from_le_bytes([b[p], b[p + 1]]) as f32 / 32768.0,
+                (3, 32) => f32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]),
+                _ => bail!("不支持的 WAV 格式：format={format} bits={bits}"),
+            };
+        }
+        out.push(acc / ch as f32);
+    }
+    Ok(Mono { samples: out, sample_rate: rate })
+}
