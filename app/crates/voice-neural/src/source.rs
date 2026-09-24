@@ -77,11 +77,18 @@ pub fn combtooth(f0: &[f32], sample_rate: f32, block_size: usize) -> Source {
             combtooth[t * block_size + n] = sinc(rad / (s_inst + 1e-5));
         }
 
+        // 本帧起始相位（n = 0 处，已加 carry 并折回 ±0.5 圈）。
+        //
+        // ⚠️ 这是**要喂进网络**的量，所以必须和参考实现逐项一致：
+        // 它取的是 `rad[:, :, :1]`，也就是加完 carry、折完之后的第 0 个样本 ——
+        // 而 n=0 处的 `rad` 是 `s0·1`（公式里是 `n+1`），不是 0。
+        // 少算这一项，条件输入就整体偏了一个样本的相位。
+        let first = s0[t] + carry;
+        phase[t] = std::f32::consts::TAU * (first - first.round());
+
         // 本帧末尾的相位余数，折到 [-0.5, 0.5)
         let end = s0[t] * bs + 0.5 * ds0[t] * (bs - 1.0);
-        let rad2 = (end + carry + 0.5).rem_euclid(1.0) - 0.5;
-        acc = rad2;
-        phase[t] = std::f32::consts::TAU * carry;
+        acc = (end + carry + 0.5).rem_euclid(1.0) - 0.5;
     }
 
     Source { combtooth, phase }

@@ -323,6 +323,37 @@ impl Unit2Control {
     }
 }
 
+impl Controls {
+    /// 把四组控制量变成两组逐帧复数滤波器。
+    ///
+    /// # 两个照抄的细节
+    ///
+    /// **噪声滤波器要除以 128。** 参考实现里写死的。少了这一下，
+    /// 噪声成分会盖过谐波，听起来就是一片嘶声。
+    ///
+    /// **两组都要把最后一帧复制一份接在后面。** STFT 的 `center=true`
+    /// 会比 block 帧多出一帧（`n_blocks + 1`），而网络只吐 `n_blocks` 帧。
+    /// 不补的话最后一帧没有滤波器可用。
+    pub fn filters(&self) -> (crate::synth::Spectrum, crate::synth::Spectrum) {
+        let build = |mag: &[f32], phase: &[f32], scale: f32| -> crate::synth::Spectrum {
+            let mut data = Vec::with_capacity((self.frames + 1) * self.bins);
+            for t in 0..self.frames {
+                let r = t * self.bins..(t + 1) * self.bins;
+                data.extend(crate::synth::filter_from(&mag[r.clone()], &phase[r], scale));
+            }
+            // 末帧复制一份
+            let last = self.frames.saturating_sub(1) * self.bins;
+            let tail: Vec<_> = data[last..last + self.bins].to_vec();
+            data.extend(tail);
+            crate::synth::Spectrum { data, frames: self.frames + 1, bins: self.bins }
+        };
+        (
+            build(&self.harmonic_magnitude, &self.harmonic_phase, 1.0),
+            build(&self.noise_magnitude, &self.noise_phase, 1.0 / 128.0),
+        )
+    }
+}
+
 impl std::fmt::Debug for Controls {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Controls {{ {} 帧 × {} 频点 × 4 组 }}", self.frames, self.bins)
@@ -440,9 +471,13 @@ pub fn check_against(
     use std::collections::{BTreeMap, BTreeSet};
     let actual: BTreeMap<String, Vec<usize>> = dump_keys(path)?
         .into_iter()
-        // DDSP-SVC 把权重放在 `model.` 这一层下面
-        .map(|(k, v)| (k.strip_prefix("model.").unwrap_or(&k).to_string(), v))
+        .filter_map(|(k, v)| k.strip_prefix(WEIGHT_PREFIX).map(|k| (k.to_string(), v)))
         .collect();
+    if actual.is_empty() {
+        bail!(
+            "检查点里没有任何 `{WEIGHT_PREFIX}` 开头的张量。\n             这可能是纯扩散模型（只有 `diff_model.*`），或者根本不是 DDSP-SVC 的检查点。"
+        );
+    }
     let want = expected_keys(n_unit, n_spk, bins);
 
     let mut missing = Vec::new();
@@ -460,11 +495,37 @@ pub fn check_against(
     let extra: Vec<&String> = actual.keys().filter(|k| !wanted.contains(k)).collect();
 
     if missing.is_empty() && wrong.is_empty() {
-        let note = if extra.is_empty() {
-            String::new()
-        } else {
-            format!("\n（检查点里另有 {} 个本实现用不到的张量，正常）", extra.len())
+        // 检查点里确实有几个本实现用不到的张量，而且**已知为什么**：
+        //
+        // - `*.norm.*`（每个编码层各一对）：那是 attention 分支的 LayerNorm。
+        //   `conv_only=True` 下 attention 整个不执行，它也就用不上。
+        // - `aug_shift_embed`：训练时的移调增广，推理不给 aug_shift 就不参与。
+        //
+        // 把"已知无用"和"没想到的多余"分开报 —— 后者才值得警惕。
+        let known = |k: &str| {
+            k.starts_with("aug_shift_embed") || (k.contains("encoder_layers.") && k.contains(".norm."))
         };
+        let (expected_extra, surprise): (Vec<&String>, Vec<&String>) =
+            extra.into_iter().partition(|k| known(k.as_str()));
+        let mut note = String::new();
+        if !expected_extra.is_empty() {
+            note.push_str(&format!(
+                "\n（另有 {} 个本实现用不到但已知原因的张量：attention 分支的 norm、训练期的移调增广）",
+                expected_extra.len()
+            ));
+        }
+        if !surprise.is_empty() {
+            note.push_str(&format!(
+                "\n⚠️ 还有 {} 个没料到的张量，值得看一眼：{}",
+                surprise.len(),
+                surprise
+                    .iter()
+                    .take(5)
+                    .map(|s| s.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("、")
+            ));
+        }
         return Ok(format!("✅ {} 个张量全部对上{note}", want.len()));
     }
 
@@ -492,33 +553,141 @@ pub fn check_against(
 
 /// 从 PyTorch 检查点里把参数名列出来 —— 排查"对不上"时的第一件事。
 pub fn dump_keys(path: &std::path::Path) -> Result<Vec<(String, Vec<usize>)>> {
-    let tensors = candle_core::pickle::read_pth_tensor_info(path, true, None)
-        .with_context(|| format!("读取检查点失败：{}", path.display()))?;
-    let mut out: Vec<(String, Vec<usize>)> = tensors
-        .into_iter()
-        .map(|t| (t.name, t.layout.shape().dims().to_vec()))
-        .collect();
-    out.sort();
-    Ok(out)
+    // DDSP-SVC 把 state_dict 塞在顶层的 `model` 键下面。
+    // 不指定 key 的话 candle 只看顶层，会一个张量都找不到 ——
+    // 那种"成功返回空表"比报错更容易骗过人。
+    for key in [Some(PICKLE_ROOT), None] {
+        let tensors = candle_core::pickle::read_pth_tensor_info(path, false, key)
+            .with_context(|| format!("读取检查点失败：{}", path.display()))?;
+        if tensors.is_empty() {
+            continue;
+        }
+        let mut out: Vec<(String, Vec<usize>)> = tensors
+            .into_iter()
+            .map(|t| (t.name, t.layout.shape().dims().to_vec()))
+            .collect();
+        out.sort();
+        return Ok(out);
+    }
+    bail!(
+        "检查点里找不到任何张量：{}（试过顶层和 `{PICKLE_ROOT}` 两层）",
+        path.display()
+    )
 }
 
-/// 打开检查点并构造网络。
-pub fn load_from_pth(
-    path: &std::path::Path,
-    n_unit: usize,
-    n_spk: usize,
-    bins: usize,
-) -> Result<Unit2Control> {
-    let device = Device::Cpu;
-    let vb = VarBuilder::from_pth(path, DType::F32, &device)
+/// 检查点里 state_dict 所在的顶层键。
+pub const PICKLE_ROOT: &str = "model";
+
+/// 打开检查点，**进到 `model` 这一层**。
+///
+/// ⚠️ `VarBuilder::from_pth` 写死了 `PthTensors::new(p, None)`，只看顶层。
+/// 而 DDSP-SVC 的顶层是 `{"model": {...}, "global_step": ...}` ——
+/// 直接用它会**一个张量都找不到**，而且报的是"cannot find tensor X"，
+/// 看着像层名写错了，其实是层级没进去。
+fn open_var_builder<'a>(path: &std::path::Path, device: &Device) -> Result<VarBuilder<'a>> {
+    let pth = candle_core::pickle::PthTensors::new(path, Some(PICKLE_ROOT))
         .with_context(|| format!("加载检查点失败：{}", path.display()))?;
-    // DDSP-SVC 把权重放在 `model` 这一层下面
-    let vb = if vb.contains_tensor("model.stack.0.weight") {
-        vb.pp("model")
-    } else {
-        vb
+    Ok(VarBuilder::from_backend(Box::new(pth), DType::F32, device.clone()))
+}
+
+/// 解码器网络在 state_dict 里的前缀。
+///
+/// ⚠️ 实测出来的，不是猜的。DDSP-SVC 5.0 的 `model_0.pt` 里同时装着
+/// **两个**模型：`ddsp_model.*`（本实现要的）与 `diff_model.*`
+/// （扩散细化模型，另一条路）。按 `model.` 直接找会一个都找不到。
+pub const WEIGHT_PREFIX: &str = "ddsp_model.unit2ctrl.";
+
+/// 从检查点里读出配置，而不是写死在代码里。
+///
+/// 写死的后果是换一个模型（比如 44.1 kHz 换成 48 kHz、block 512 换成 480）
+/// 照样能加载、照样出声，只是**整体音高和时长都不对** —— 而且没有任何一步报错。
+///
+/// 这里能从形状反推的就反推：
+/// `window` 的长度就是 `win_length`，`stack.0.weight` 的第二维就是 `n_unit`，
+/// `spk_embed.weight` 在不在决定单说话人还是多说话人。
+pub fn read_config(path: &std::path::Path) -> Result<Config> {
+    let keys: std::collections::BTreeMap<String, Vec<usize>> = dump_keys(path)?
+        .into_iter()
+        .map(|(k, v)| (k.strip_prefix("ddsp_model.").unwrap_or(&k).to_string(), v))
+        .collect();
+
+    let win_length = keys
+        .get("window")
+        .and_then(|s| s.first().copied())
+        .context("检查点里没有 `window` —— 这不是 DDSP 的 CombSub 模型")?;
+
+    let n_unit = keys
+        .get("unit2ctrl.stack.0.weight")
+        .and_then(|s| s.get(1).copied())
+        .context("检查点里没有 `unit2ctrl.stack.0.weight`")?;
+
+    let n_spk = keys
+        .get("unit2ctrl.spk_embed.weight")
+        .and_then(|s| s.first().copied())
+        .unwrap_or(1);
+
+    // dense_out 的输出宽度必须正好是 4 组频点 —— 对不上说明这不是
+    // CombSub（比如 Sins 的输出结构完全不同）
+    let n_out = keys
+        .get("unit2ctrl.dense_out.bias")
+        .and_then(|s| s.first().copied())
+        .context("检查点里没有 `unit2ctrl.dense_out.bias`")?;
+    let bins = win_length / 2 + 1;
+    if n_out != bins * 4 {
+        bail!(
+            "dense_out 宽度是 {n_out}，而 win_length={win_length} 要求 {}（4 组 × {bins} 频点）。\n             这多半不是 CombSub 模型。",
+            bins * 4
+        );
+    }
+
+    // block_size 与 sampling_rate 是 0 维缓冲，形状里读不出来，
+    // 必须真的把值取出来。写死默认值的后果是换个模型照样能跑、
+    // 照样出声，只是**整体音高和时长都不对**，而且没有一步报错。
+    let device = Device::Cpu;
+    let vb = open_var_builder(path, &device)?;
+    let scalar = |name: &str| -> Result<f32> {
+        let t = vb
+            .get((), name)
+            .with_context(|| format!("检查点里没有 `{name}`"))?;
+        Ok(t.to_scalar::<f32>()?)
     };
-    Unit2Control::load(vb, n_unit, n_spk, bins)
+    let block_size = scalar("ddsp_model.block_size")? as usize;
+    let sample_rate = scalar("ddsp_model.sampling_rate")? as u32;
+    if block_size == 0 || sample_rate == 0 {
+        bail!("检查点里的 block_size={block_size} / sampling_rate={sample_rate} 不合理");
+    }
+
+    Ok(Config { win_length, bins, n_unit, n_spk, block_size, sample_rate })
+}
+
+/// 从检查点读出来的结构参数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Config {
+    pub win_length: usize,
+    /// `win_length / 2 + 1`
+    pub bins: usize,
+    pub n_unit: usize,
+    pub n_spk: usize,
+    /// 解码器的帧步进（样本）。
+    pub block_size: usize,
+    /// 解码器的采样率。输入必须重采样到这个值。
+    pub sample_rate: u32,
+}
+
+/// 打开检查点并构造网络。结构参数从检查点里读，不写死。
+///
+/// 加载前先跑一遍 [`check_against`]：对不上就在这里以人话失败，
+/// 而不是等音频出来听着不对再回头猜。
+pub fn load_from_pth(path: &std::path::Path) -> Result<(Unit2Control, Config)> {
+    let cfg = read_config(path)?;
+    let report = check_against(path, cfg.n_unit, cfg.n_spk, cfg.bins)?;
+    log::info!("{report}");
+
+    let device = Device::Cpu;
+    let vb = open_var_builder(path, &device)?;
+    let vb = vb.pp("ddsp_model").pp("unit2ctrl");
+    let net = Unit2Control::load(vb, cfg.n_unit, cfg.n_spk, cfg.bins)?;
+    Ok((net, cfg))
 }
 
 #[cfg(test)]

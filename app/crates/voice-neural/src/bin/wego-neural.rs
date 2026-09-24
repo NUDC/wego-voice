@@ -36,6 +36,22 @@ fn main() -> Result<()> {
     }
 
     match args.get(1).map(String::as_str) {
+        #[cfg(all(feature = "candle", feature = "onnx"))]
+        Some("convert") => {
+            let enc: PathBuf = args
+                .get(2)
+                .context("用法：wego-neural convert <编码器.onnx> <解码器.pt> <干声.wav> <输出.wav>")?
+                .into();
+            let dec: PathBuf = args.get(3).context("缺少解码器检查点")?.into();
+            let src: PathBuf = args.get(4).context("缺少干声 WAV")?.into();
+            let out: PathBuf = args.get(5).context("缺少输出路径")?.into();
+            convert(&enc, &dec, &src, &out)
+        }
+        #[cfg(feature = "candle")]
+        Some("check") => {
+            let p: PathBuf = args.get(2).context("用法：wego-neural check <检查点.pt>")?.into();
+            check(&p)
+        }
         #[cfg(feature = "candle")]
         Some("keys") => {
             let p: PathBuf = args.get(2).context("用法：wego-neural keys <检查点.pt>")?.into();
@@ -280,4 +296,184 @@ fn keys(path: &Path) -> Result<()> {
     }
     println!("\n参数量 {:.2} M", total as f64 / 1e6);
     Ok(())
+}
+
+
+/// 拿检查点跟本实现的期望对一遍。
+#[cfg(feature = "candle")]
+fn check(path: &Path) -> Result<()> {
+    use voice_neural::decoder;
+    let cfg = decoder::read_config(path)?;
+    println!("═══ {} ═══\n", path.display());
+    println!("从检查点读出来的结构：");
+    println!("  采样率      {} Hz", cfg.sample_rate);
+    println!("  block_size  {}（{:.2} fps）", cfg.block_size,
+             cfg.sample_rate as f32 / cfg.block_size as f32);
+    println!("  win_length  {}", cfg.win_length);
+    println!("  频点数      {}（win/2+1）", cfg.bins);
+    println!("  内容特征维  {}", cfg.n_unit);
+    println!("  说话人数    {}", cfg.n_spk);
+    println!();
+    match decoder::check_against(path, cfg.n_unit, cfg.n_spk, cfg.bins) {
+        Ok(r) => {
+            println!("{r}");
+            Ok(())
+        }
+        Err(e) => {
+            println!("{e}");
+            anyhow::bail!("权重名/形状对不上")
+        }
+    }
+}
+
+
+/// 整条链路跑一遍：干声 → 声线转换 → WAV。
+///
+/// # 这一步能验什么、不能验什么
+///
+/// **能验**：跑得通、长度对、没有 NaN、没有爆幅、可复现。
+/// **不能验**：像不像。那是耳朵的事，我没有。
+///
+/// 所以这里把所有能机器判定的都判一遍，剩下的交给人听。
+#[cfg(all(feature = "candle", feature = "onnx"))]
+fn convert(enc_path: &Path, dec_path: &Path, wav: &Path, out: &Path) -> Result<()> {
+    use voice_neural::{decoder, encoder, features, source, synth};
+
+    println!("═══ 声线转换 ═══\n");
+
+    // ── 1. 解码器（连带把结构参数读出来）──
+    let (net, cfg) = decoder::load_from_pth(dec_path)?;
+    println!(
+        "解码器  {} Hz / block {} / win {} / {} 说话人",
+        cfg.sample_rate, cfg.block_size, cfg.win_length, cfg.n_spk
+    );
+
+    // ── 2. 读干声并重采样到模型的采样率 ──
+    let audio = read_wav_mono(wav)?;
+    let x = encoder::resample(&audio.samples, audio.sample_rate, cfg.sample_rate);
+    let secs = x.len() as f32 / cfg.sample_rate as f32;
+    println!(
+        "输入    {:.2} 秒（{} Hz → {} Hz）",
+        secs, audio.sample_rate, cfg.sample_rate
+    );
+
+    // ── 3. 三路特征 ──
+    let t0 = std::time::Instant::now();
+    let track = voice_core::track_pitch(&x, cfg.sample_rate as f32, |_| true)
+        .context("音高提取被取消")?;
+    let mut enc = encoder::ContentEncoder::open(enc_path, 2)?;
+    let content = enc.encode(&x, cfg.sample_rate)?;
+    let a = features::align(&track, &x, cfg.sample_rate, &content, cfg.block_size)?;
+    println!("特征    {a:?}（{:.1} 秒）", t0.elapsed().as_secs_f32());
+
+    anyhow::ensure!(
+        a.dim == cfg.n_unit,
+        "内容特征是 {} 维，解码器要 {} 维 —— 编码器和解码器不配套",
+        a.dim,
+        cfg.n_unit
+    );
+
+    // ── 4. 激励 ──
+    let exc = source::combtooth(&a.f0, cfg.sample_rate as f32, cfg.block_size);
+
+    // ── 5. 网络 ──
+    let t1 = std::time::Instant::now();
+    let ctrls = net.forward(
+        &decoder::Inputs {
+            units: &a.content,
+            dim: a.dim,
+            f0: &a.f0,
+            phase: &exc.phase,
+            volume: &a.volume,
+        },
+        1,
+        &candle_core::Device::Cpu,
+    )?;
+    println!("网络    {ctrls:?}（{:.1} 秒）", t1.elapsed().as_secs_f32());
+
+    // ── 6. 合成 ──
+    let (hf, nf) = ctrls.filters();
+    let y = synth::synthesize(&exc.combtooth, cfg.win_length, cfg.block_size, &hf, &nf, 1);
+
+    // ── 能机器判定的，全判一遍 ──
+    let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let rms = (y.iter().map(|v| v * v).sum::<f32>() / y.len().max(1) as f32).sqrt();
+    let nan = y.iter().filter(|v| !v.is_finite()).count();
+    println!(
+        "\n输出    {} 样本（{:.2} 秒）  峰值 {peak:.3}  RMS {rms:.4}  NaN {nan}",
+        y.len(),
+        y.len() as f32 / cfg.sample_rate as f32
+    );
+    anyhow::ensure!(nan == 0, "输出里有 {nan} 个 NaN");
+    anyhow::ensure!(peak > 1e-4, "输出几乎是静音（峰值 {peak:.6}）");
+    anyhow::ensure!(peak < 100.0, "输出爆幅（峰值 {peak:.1}）—— 多半是滤波器尺度错了");
+    anyhow::ensure!(
+        y.len() == a.frames * cfg.block_size,
+        "输出长度 {} ≠ {} 帧 × {}",
+        y.len(),
+        a.frames,
+        cfg.block_size
+    );
+
+    // ⚠️ 一条**机器能判**的关键性质：音高必须原样保住。
+    //
+    // 这整条路的承诺是"音高走你的，音色走他的"。音色像不像我听不出来，
+    // 但音高有没有被改动是能量的 —— 而且它最容易出错：
+    // 相位接力断了、f0 条件接错了、激励和滤波器错位，都会表现为音高跑掉。
+    let back = voice_core::track_pitch(&y, cfg.sample_rate as f32, |_| true)
+        .context("产物音高提取失败")?;
+    let mut drift: Vec<f32> = Vec::new();
+    for (t, f) in back.frames.iter().enumerate() {
+        let pos = t * back.hop;
+        let frame = pos / cfg.block_size;
+        if !f.voiced || frame >= a.frames || !a.voiced[frame] || a.f0[frame] <= 0.0 {
+            continue;
+        }
+        drift.push(1200.0 * (f.f0 / a.f0[frame]).log2());
+    }
+    if drift.is_empty() {
+        println!("
+⚠️ 产物里测不到浊音 —— 没法验证音高是否保住");
+    } else {
+        drift.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        let med = drift[drift.len() / 2];
+        let p90 = drift[drift.len() * 9 / 10].abs().max(drift[drift.len() / 10].abs());
+        println!(
+            "
+音高保真  中位偏差 {med:+.1} 音分 / P90 |{p90:.1}| 音分（{} 帧）",
+            drift.len()
+        );
+        anyhow::ensure!(
+            med.abs() < 50.0,
+            "输出音高整体偏了 {med:.0} 音分 —— 音高没保住，链路某处接错了"
+        );
+    }
+
+    write_wav(out, &y, cfg.sample_rate)?;
+    println!("已写入  {}", out.display());
+    println!("\n⚠️ 机器只能验到这里。**像不像要靠耳朵** —— 我没有。");
+    Ok(())
+}
+
+/// 写 32-bit float 单声道 WAV。
+#[cfg(all(feature = "candle", feature = "onnx"))]
+fn write_wav(path: &Path, x: &[f32], rate: u32) -> Result<()> {
+    let bytes = (x.len() * 4) as u32;
+    let mut v = Vec::with_capacity(44 + bytes as usize);
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&(36 + bytes).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes());
+    v.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
+    v.extend_from_slice(&1u16.to_le_bytes());
+    v.extend_from_slice(&rate.to_le_bytes());
+    v.extend_from_slice(&(rate * 4).to_le_bytes());
+    v.extend_from_slice(&4u16.to_le_bytes());
+    v.extend_from_slice(&32u16.to_le_bytes());
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&bytes.to_le_bytes());
+    for s in x {
+        v.extend_from_slice(&s.to_le_bytes());
+    }
+    std::fs::write(path, &v).with_context(|| format!("写入失败：{}", path.display()))
 }

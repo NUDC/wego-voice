@@ -5479,6 +5479,7 @@ dependencies = [
  "anyhow",
  "candle-core",
  "candle-nn",
+ "log",
  "ort",
  "ort-tract",
  "voice-core",

@@ -30,6 +30,7 @@ candle = ["dep:candle-core", "dep:candle-nn"]
 
 [dependencies]
 anyhow.workspace = true
+log.workspace = true
 voice-core = { path = "../voice-core" }
 
 # `load-dynamic`：**运行时**加载 onnxruntime.dll，不在构建期链进来。
