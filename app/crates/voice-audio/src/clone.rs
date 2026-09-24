@@ -1,17 +1,20 @@
 //! 声线转换任务：**跑一个子进程**，而不是在本进程里推理。
 //!
-//! # 为什么是子进程
+//! # 为什么是子进程 —— 而且是**主程序拉起自己**
 //!
-//! 推理引擎和模型是按需下载的，主程序里一行推理代码都没有 ——
-//! 6.5 MB 免安装单文件这件事不能为一个大多数人不用的功能让步。
-//!
-//! 顺带解决两件事：
+//! 推理代码就在主程序里（`--clone` 模式），但它**不在界面进程里跑**。
+//! 同一个二进制、两个进程，为了两件事：
 //!
 //! - **架构红线 3 从"一道守卫"升级成"进程级隔离"。** 以前是代码里
-//!   拦一下不让它和音频线程抢 CPU；现在推理连碰那个线程的机会都没有，
-//!   而且我们可以整体压低子进程的优先级。
-//! - **它崩了主程序不跟着崩。** 模型是用户下载来的几百 MB 文件，
-//!   坏掉的概率不低，而用户正在录的东西不该被它带走。
+//!   拦一下不让它和音频线程抢 CPU；现在它连碰那个线程的机会都没有，
+//!   而且子进程整体以 `BELOW_NORMAL_PRIORITY_CLASS` 起 ——
+//!   调度器在系统层面站在音频那边，这比一道 if 硬。
+//! - **它崩了界面不跟着崩。** 模型是用户下载来的几百 MB 文件，
+//!   解析坏文件可能直接 abort，而用户正在录的东西不该被它带走。
+//!
+//! 用同一个二进制而不是单独的伴生程序，还消掉了**版本错配**：
+//! 伴生程序单独分发的话，用户可能拿着旧的配新的，
+//! 而那种 bug 只表现为"声音不对"。
 //!
 //! # 和子进程的约定
 //!
@@ -106,7 +109,8 @@ pub fn output_path(input: &Path) -> PathBuf {
 /// 而那条错误会被当成"模型坏了"。
 pub fn build_command(exe: &Path, models: &Path, input: &Path, output: &Path, speaker: usize) -> Command {
     let mut c = Command::new(exe);
-    c.arg("--models")
+    c.arg("--clone")
+        .arg("--models")
         .arg(models)
         .arg("--input")
         .arg(input)
@@ -162,6 +166,9 @@ pub fn parse_line(s: &str) -> Option<Line> {
 }
 
 /// 启动一次声线转换。立刻返回；进度与结果通过 `state` 读取。
+///
+/// `exe` 通常就是**主程序自己**（`current_exe()`）—— 同一个二进制、
+/// 两个进程。见模块头。
 pub fn start(
     state: Arc<CloneState>,
     exe: PathBuf,
@@ -350,7 +357,9 @@ mod tests {
             3,
         );
         let args: Vec<String> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
-        for want in ["--models", "--input", "--output", "--speaker"] {
+        // `--clone` 不能漏 —— 漏了的话拉起的是**界面**，
+        // 表现是点一下转换就多开一个窗口
+        for want in ["--clone", "--models", "--input", "--output", "--speaker"] {
             assert!(args.iter().any(|a| a == want), "少了 {want}：{args:?}");
         }
         assert!(args.iter().any(|a| a == "3"), "说话人编号没传：{args:?}");

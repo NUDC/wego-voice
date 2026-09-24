@@ -555,8 +555,8 @@ function CloneBlock({
           「像某个指定的人」那一档。它做不进 30 毫秒（内容编码要看上下文），
           只能放在录制之后 —— 所以它在这里，不在「调音」页。
           <br />
-          需要 <b>{(status.missingBytes / 1048576).toFixed(0)} MB</b> 的模型与推理程序。
-          <b>主程序体积不受影响</b>，不用这个功能就一个字节都不必下。
+          需要 <b>{(status.missingBytes / 1048576).toFixed(0)} MB</b> 的模型。
+          推理代码就在主程序里，但会**单独起一个进程**跑 —— 它没机会和耳返抢 CPU。
         </p>
         <ul className="clone-missing">
           {status.missing.map((m) => (

@@ -745,7 +745,10 @@ pub fn clone_start(
     speaker: usize,
 ) -> Result<(), String> {
     let dir = models_dir(&app)?;
-    let exe = dir.join(voice_neural::assets::COMPANION);
+    // **拉起自己**（`--clone` 模式）。同一个二进制、两个进程：
+    // 推理没机会饿死音频线程，模型坏了也不会带走界面 ——
+    // 而且不存在"伴生程序版本和主程序对不上"。
+    let exe = std::env::current_exe().map_err(|e| format!("取不到自身路径：{e}"))?;
     // 路径同样要过闸 —— 它来自前端
     let takes = recordings_dir(&app)?;
     let input = voice_audio::takes::within(&takes, std::path::Path::new(&path))

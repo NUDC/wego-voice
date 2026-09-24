@@ -67,6 +67,11 @@ pub mod source;
 /// 合成级：频域滤波 + 重建。同样不含权重，能验到底。
 pub mod synth;
 
+/// 声线转换的完整流程。库函数 —— 主程序的 `--clone` 模式与
+/// `wego-clone.exe` 共用这一份，避免"命令行能跑、界面里不对"。
+#[cfg(all(feature = "candle", feature = "onnx"))]
+pub mod convert;
+
 /// 解码器网络（带权重的那一半）。
 #[cfg(feature = "candle")]
 pub mod decoder;

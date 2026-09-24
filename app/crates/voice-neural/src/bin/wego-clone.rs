@@ -33,8 +33,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
-use voice_neural::{assets, decoder, encoder, features, source, synth, wav};
+use anyhow::{Context, Result};
+
 
 fn main() {
     if let Err(e) = run() {
@@ -89,12 +89,7 @@ fn parse() -> Result<Args> {
 /// 下载完伴生程序之后先跑这一下，比等到用户点了转换才发现
 /// "这个 exe 在这台机器上根本起不来"要好。
 fn selftest() -> Result<()> {
-    voice_neural::session::init_pure_rust();
-    let f0 = vec![220.0f32; 8];
-    let s = source::combtooth(&f0, 44_100.0, 512);
-    if s.combtooth.iter().any(|v| !v.is_finite()) {
-        bail!("激励生成异常");
-    }
+    voice_neural::convert::selftest()?;
     say("OK selftest");
     Ok(())
 }
@@ -102,116 +97,19 @@ fn selftest() -> Result<()> {
 fn run() -> Result<()> {
     let args = parse()?;
     voice_neural::session::init_pure_rust();
-
-    let enc_path = args.models.join(assets::ASSETS[0].name);
-    let dec_path = args.models.join(assets::ASSETS[1].name);
-    for p in [&enc_path, &dec_path] {
-        if !p.is_file() {
-            bail!("模型文件不存在：{}", p.display());
-        }
-    }
-
-    // ── 解码器：顺带把结构参数读出来，不写死 ──
-    stage("载入解码器");
-    progress(0.02);
-    let (net, cfg) = decoder::load_from_pth(&dec_path)?;
-
-    // ── 读干声并重采样到模型的采样率 ──
-    stage("读取音频");
-    progress(0.05);
-    let audio = wav::read(&args.input)?;
-    if audio.samples.is_empty() {
-        bail!("文件里没有音频数据");
-    }
-    let x = encoder::resample(&audio.samples, audio.sample_rate, cfg.sample_rate);
-    if x.len() < cfg.block_size * 4 {
-        bail!(
-            "音频太短：重采样后只有 {} 个样本，不够 4 帧",
-            x.len()
-        );
-    }
-
-    // ── 三路特征 ──
-    stage("提取音高轨");
-    let track = voice_core::track_pitch(&x, cfg.sample_rate as f32, |p| {
-        progress(0.08 + p * 0.17);
-        true
-    })
-    .context("音高提取失败")?;
-    if track.voiced_count() == 0 {
-        bail!("整段音频里没有检测到人声 —— 确认录的是干声，不是伴奏");
-    }
-
-    stage("分析内容");
-    progress(0.28);
-    let mut enc = encoder::ContentEncoder::open(&enc_path, 2)?;
-    let content = enc.encode(&x, cfg.sample_rate)?;
-    progress(0.72);
-
-    let a = features::align(&track, &x, cfg.sample_rate, &content, cfg.block_size)?;
-    if a.dim != cfg.n_unit {
-        bail!(
-            "内容特征是 {} 维，解码器要 {} 维 —— 编码器和解码器不配套",
-            a.dim,
-            cfg.n_unit
-        );
-    }
-    if args.speaker == 0 || args.speaker > cfg.n_spk {
-        bail!("声线编号 {} 越界（这个模型有 {} 个）", args.speaker, cfg.n_spk);
-    }
-
-    // ── 合成 ──
-    stage("重新合成");
-    progress(0.75);
-    let exc = source::combtooth(&a.f0, cfg.sample_rate as f32, cfg.block_size);
-    let ctrls = net.forward(
-        &decoder::Inputs {
-            units: &a.content,
-            dim: a.dim,
-            f0: &a.f0,
-            phase: &exc.phase,
-            volume: &a.volume,
+    let out = voice_neural::convert::run(
+        &voice_neural::convert::Job {
+            models: args.models,
+            input: args.input,
+            output: args.output,
+            speaker: args.speaker,
         },
-        args.speaker,
-        &candle_core::Device::Cpu,
+        |r| match r {
+            voice_neural::convert::Report::Stage(s) => stage(s),
+            voice_neural::convert::Report::Progress(p) => progress(p),
+        },
     )?;
-    progress(0.90);
-
-    let (hf, nf) = ctrls.filters();
-    let y = synth::synthesize(&exc.combtooth, cfg.win_length, cfg.block_size, &hf, &nf, 1);
-
-    // ── 能机器判定的，落盘之前全判一遍 ──
-    check(&y, &a)?;
-    progress(0.98);
-
-    // ⚠️ **最后一步才落盘。** 中途被父进程杀掉不会留下半个文件 ——
-    // 一个"存在但内容是残的"产物，比没有产物糟得多。
-    stage("写入文件");
-    wav::write(&args.output, &y, cfg.sample_rate)?;
-    progress(1.0);
-    say(&format!("OK {}", args.output.display()));
-    Ok(())
-}
-
-/// 落盘之前的自检。
-///
-/// 这些是**机器能判**的全部：没有 NaN、不是静音、没有爆幅、长度对、
-/// 而且**音高保住了**。像不像判不了，那是耳朵的事。
-fn check(y: &[f32], a: &features::Aligned) -> Result<()> {
-    let nan = y.iter().filter(|v| !v.is_finite()).count();
-    if nan > 0 {
-        bail!("输出里有 {nan} 个非有限值 —— 推理过程中某处发散了");
-    }
-    let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-    if peak < 1e-4 {
-        bail!("输出几乎是静音（峰值 {peak:.6}）");
-    }
-    if peak > 100.0 {
-        bail!("输出爆幅（峰值 {peak:.1}）—— 多半是模型与代码版本不配套");
-    }
-    if y.len() != a.frames * a.block_size {
-        bail!("输出长度 {} 与 {} 帧对不上", y.len(), a.frames);
-    }
+    say(&format!("OK {}", out.display()));
     Ok(())
 }
 

@@ -79,30 +79,7 @@ pub const ASSETS: &[Asset] = &[
     },
 ];
 
-/// 伴生程序的下载地址。
-///
-/// 它由本项目的 CI 构建并随 Release 发布，所以**不钉哈希** ——
-/// 每次发版它都会变。取而代之的校验是：下完直接跑一次 `--selftest`。
-/// 那比哈希更有意义：它验的是"这个 exe 在这台机器上真的能跑"，
-/// 而不只是"字节没错"。
-pub const COMPANION_URL: &str =
-    "https://github.com/NUDC/wego-voice/releases/latest/download/wego-clone.exe";
 
-/// 伴生程序的镜像。理由同上面的模型。
-pub const COMPANION_MIRRORS: &[&str] = &[
-    "https://gh-proxy.com/https://github.com/NUDC/wego-voice/releases/latest/download/wego-clone.exe",
-    "https://ghfast.top/https://github.com/NUDC/wego-voice/releases/latest/download/wego-clone.exe",
-];
-
-/// 伴生程序的文件名。
-///
-/// 推理**不在主程序里跑**，而是交给这个单独的可执行文件：
-///
-/// 1. 主程序体积不受影响 —— 不用这个功能的人一个字节都不必付
-/// 2. 架构红线 3 升级成**进程级隔离** —— 推理连碰音频线程的机会都没有，
-///    而且可以整体降低它的进程优先级
-/// 3. 它崩了主程序不跟着崩
-pub const COMPANION: &str = "wego-clone.exe";
 
 /// 模型目录的文件夹名。放在盘根下，用户一眼能认出来是谁的。
 pub const DIR_NAME: &str = "wego-voice-models";
@@ -264,18 +241,19 @@ impl State {
 }
 
 /// 整套资产的状态。
+///
+/// ⚠️ 这里**只有模型**。推理代码在主程序自己身上（`--clone` 模式），
+/// 不是一件要下载的东西 —— 那样也就不存在"伴生程序版本和主程序对不上"。
 #[derive(Debug, Clone)]
 pub struct Status {
     pub items: Vec<(Asset, State)>,
-    /// 伴生程序在不在。
-    pub companion: bool,
     pub dir: PathBuf,
 }
 
 impl Status {
     /// 全齐了才能用。
     pub fn ready(&self) -> bool {
-        self.companion && self.items.iter().all(|(_, s)| s.usable())
+        self.items.iter().all(|(_, s)| s.usable())
     }
 
     /// 还差多少字节。
@@ -292,7 +270,7 @@ impl Status {
 
     /// 缺的东西，人话列表。
     pub fn missing(&self) -> Vec<String> {
-        let mut v: Vec<String> = self
+        let v: Vec<String> = self
             .items
             .iter()
             .filter(|(_, s)| !s.usable())
@@ -307,9 +285,6 @@ impl Status {
                 _ => format!("{}（{:.0} MB）", a.name, a.mb()),
             })
             .collect();
-        if !self.companion {
-            v.push(format!("{COMPANION}（推理程序）"));
-        }
         v
     }
 }
@@ -329,11 +304,7 @@ pub fn status(d: &Path) -> Status {
             (*a, st)
         })
         .collect();
-    Status {
-        items,
-        companion: d.join(COMPANION).is_file(),
-        dir: d,
-    }
+    Status { items, dir: d }
 }
 
 /// 下载进度的一次汇报。
@@ -379,13 +350,6 @@ pub fn download_missing(
             ));
         }
     }
-    if !st.companion {
-        let mut urls = vec![COMPANION_URL.to_string()];
-        urls.extend(COMPANION_MIRRORS.iter().map(|s| s.to_string()));
-        // 伴生程序体积每次发版都不同，所以不给期望大小 —— 读到 EOF 为止
-        todo.push((COMPANION.to_string(), urls, 0, None));
-    }
-
     let count = todo.len();
     for (i, (name, urls, bytes, sha)) in todo.into_iter().enumerate() {
         let dest = dir.join(&name);
@@ -711,13 +675,13 @@ mod tests {
         let d = tmp("empty");
         let s = status(&dir(&d));
         assert!(!s.ready());
-        assert!(!s.companion);
         assert_eq!(s.items.len(), ASSETS.len());
         assert!(s.items.iter().all(|(_, st)| *st == State::Missing));
         // 缺的字节数 = 全部
         assert_eq!(s.missing_bytes(), ASSETS.iter().map(|a| a.bytes).sum::<u64>());
-        // 伴生程序也要报出来
-        assert!(s.missing().iter().any(|m| m.contains(COMPANION)));
+        // 每件资产都要报出来，带体积
+        assert_eq!(s.missing().len(), ASSETS.len());
+        assert!(s.missing().iter().all(|m| m.contains("MB")));
     }
 
     /// ⚠️ 大小不对必须报「没下完」，而不是当成有。

@@ -39,6 +39,32 @@ struct Cli {
     #[arg(long)]
     autostart: bool,
 
+    /// 声线转换（无界面）。**由界面把自己再拉起一个进程来跑。**
+    ///
+    /// 为什么不在界面进程里直接跑：推理满载一个核十几秒，而耳返每 3 ms
+    /// 就要交一次货、余量只有 0.08 ms。单开一个进程之后，它以低优先级起，
+    /// 调度器在系统层面站在音频那边 —— 这比代码里一道 if 硬。
+    /// 而且模型是用户下载来的几百 MB 文件，解析坏文件可能直接 abort，
+    /// 那不能带走用户正在录的东西。
+    #[arg(long, conflicts_with_all = ["bench", "selftest", "autostart"])]
+    clone: bool,
+
+    /// 模型目录（--clone）
+    #[arg(long)]
+    models: Option<String>,
+
+    /// 输入干声（--clone）
+    #[arg(long)]
+    input: Option<String>,
+
+    /// 输出路径（--clone）
+    #[arg(long)]
+    output: Option<String>,
+
+    /// 声线编号，从 1 数（--clone）
+    #[arg(long, default_value_t = 1)]
+    speaker: usize,
+
     /// 压测时长（秒），仅 --bench 有效
     #[arg(short, long, default_value_t = 30.0)]
     duration: f32,
@@ -77,6 +103,19 @@ fn main() {
         return;
     }
 
+    if cli.clone {
+        if let Err(e) = run_clone(&cli) {
+            // 错误也走 stdout，和进度同一条流 —— 父进程只读一处。
+            // 写 stderr 的话会和推理库自己的日志混在一起，
+            // 父进程分不清哪句是给用户看的。
+            println!("ERR {e:#}");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if cli.selftest {
         if let Err(e) = run_selftest(&cli) {
             log::error!("自检失败：{e}");
@@ -86,6 +125,47 @@ fn main() {
     }
 
     wego_voice_lib::run(cli.autostart, cli.f0_floor);
+}
+
+/// 声线转换子进程。
+///
+/// # 和父进程的约定
+///
+/// stdout **逐行**输出，父进程按前缀解析。设计成人能读的 ——
+/// 出问题时第一件事就是手工跑一遍看它说什么：
+///
+/// ```text
+/// STAGE 提取音高轨
+/// PROGRESS 0.32
+/// OK D:\Music\wego-voice\wego-123-cloned.wav
+/// ```
+///
+/// 取消不需要协议：父进程直接杀掉本进程。所以**产物最后一步才落盘**，
+/// 中途被杀不会留下半个文件。
+fn run_clone(cli: &Cli) -> anyhow::Result<()> {
+    use std::io::Write;
+    use voice_neural::convert::{self, Report};
+
+    fn say(line: &str) {
+        println!("{line}");
+        // 必须立刻冲刷：管道是块缓冲的，不冲的话进度会攒到进程结束
+        // 才一起出来，而那时候进度条已经没有意义了。
+        let _ = std::io::stdout().flush();
+    }
+
+    voice_neural::session::init_pure_rust();
+    let job = convert::Job {
+        models: cli.models.clone().context("缺少 --models")?.into(),
+        input: cli.input.clone().context("缺少 --input")?.into(),
+        output: cli.output.clone().context("缺少 --output")?.into(),
+        speaker: cli.speaker.max(1),
+    };
+    let out = convert::run(&job, |r| match r {
+        Report::Stage(s) => say(&format!("STAGE {s}")),
+        Report::Progress(p) => say(&format!("PROGRESS {:.4}", p.clamp(0.0, 1.0))),
+    })?;
+    say(&format!("OK {}", out.display()));
+    Ok(())
 }
 
 fn run_selftest(cli: &Cli) -> anyhow::Result<()> {
@@ -233,7 +313,37 @@ fn run_selftest(cli: &Cli) -> anyhow::Result<()> {
         tmp.file_name().unwrap_or_default().to_string_lossy(),
         out.file_name().unwrap_or_default().to_string_lossy()
     );
-    // 9. 两个满载任务不许同时跑。
+    // 9. 子进程链路：拉起**自己**（--clone），走完整条协议。
+    //
+    //    刻意指向一个**不存在的模型目录** —— 这样不需要几百 MB 的模型
+    //    也能验完整条路：进程能不能起来、stdout 协议解析对不对、
+    //    ERR 能不能原样传回来。三者任何一环断了，用户看到的都是
+    //    "转换失败"而不知道为什么。
+    {
+        let st = state.clone_job();
+        let exe = std::env::current_exe()?;
+        voice_audio::clone::start(
+            st.clone(),
+            exe,
+            takes_dir.join("没有模型"),
+            tmp.clone(),
+            1,
+        )
+        .map_err(|e| anyhow::anyhow!("起不来转换子进程：{e}"))?;
+        let t0 = Instant::now();
+        while st.is_running() {
+            anyhow::ensure!(t0.elapsed().as_secs() < 60, "转换子进程超时");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let e = st.error().context("子进程没报错，但模型目录是空的")?;
+        anyhow::ensure!(
+            e.contains("模型文件不存在"),
+            "子进程的错误没有原样传回来：{e}"
+        );
+        println!("子进程链路   拉起自己 → 协议解析 → 错误回传 ✓");
+    }
+
+    // 10. 两个满载任务不许同时跑。
     //
     //    引擎已经停了，所以这次被拒的理由必须是"离线任务在跑" ——
     //    同时跑只会让两个都变慢，而用户看到的是两条都快不起来的进度条。
